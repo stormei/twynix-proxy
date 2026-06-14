@@ -1,12 +1,19 @@
-.env
-.env.*
-!.env.example
-
-.DS_Store
-
-node_modules/
+# Logs
+logs
+*.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
 
+# Diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
 data/
 secrets/
 *.db
@@ -14,7 +21,62 @@ secrets/
 *.db-wal
 *.sqlite
 *.sqlite3
-*.log
 
+# Coverage and generated output
 coverage/
+*.lcov
 .nyc_output/
+lib-cov
+dist
+out
+.output
+build/Release
+
+# Dependency directories
+node_modules/
+jspm_packages/
+web_modules/
+
+# Environment and local machine files
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Tool caches
+.grunt
+.npm
+.eslintcache
+.stylelintcache
+.cache
+.parcel-cache
+.next
+.nuxt
+.temp
+.svelte-kit/
+.docusaurus
+.serverless/
+.fusebox/
+.dynamodb/
+.firebase/
+.tern-port
+.vscode-test
+.vite/
+**/.vitepress/dist
+**/.vitepress/cache
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# TypeScript and package manager artifacts
+*.tsbuildinfo
+.node_repl_history
+*.tgz
+.yarn-integrity
+.pnpm-store
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
