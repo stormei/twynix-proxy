@@ -46,7 +46,8 @@ const LOCAL_PATH_PREFIXES = [
   '/twynix/alarms/',
   '/api/opcua',
   '/opcua',
-  '/api/twynix/opcua'
+  '/api/twynix/opcua',
+  '/api/cameras'
 ];
 
 const STRIPPED_INBOUND_HEADERS = [

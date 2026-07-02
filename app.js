@@ -11,6 +11,7 @@ const https = require('https');
 const crypto = require('crypto');
 const helmet = require('helmet'); // ← MUST-DO: security headers
 const { createTwynixOplogRouter, createOplogEmitter } = require('./src/twynix-oplog');
+const { createCameraAssetsRouter } = require('./src/camera-assets');
 const { createTelemetryWriteGuard } = require('./src/telemetry-write-policy');
 const { createTrendQueryHandler } = require('./src/iotdb-trend-query');
 const { createIotdbSchemaHandler } = require('./src/iotdb-schema');
@@ -189,6 +190,15 @@ function getTenantIdFromToken(userToken) {
   try {
     const payload = parseJwtPayload(userToken);
     return payload.tenantId || payload.tenant_id || null;
+  } catch {
+    return null;
+  }
+}
+
+function getCustomerIdFromToken(userToken) {
+  try {
+    const payload = parseJwtPayload(userToken);
+    return payload.customerId || payload.customer_id || null;
   } catch {
     return null;
   }
@@ -1522,6 +1532,18 @@ app.use(createTwynixOplogRouter({
   getAdminToken,
   requireValidUser,
   logger: (obj) => console.log(JSON.stringify(obj))
+}));
+
+app.use('/api/cameras', createCameraAssetsRouter({
+  express,
+  ax,
+  config,
+  getAdminToken,
+  requireValidUser,
+  getUserAuthoritiesFromToken,
+  getCustomerIdFromToken,
+  hasAllowedRole,
+  emitAuditEvent
 }));
 
 app.get('/twynix/status', async (req, res) => {
