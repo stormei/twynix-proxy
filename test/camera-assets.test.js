@@ -6,6 +6,7 @@ const {
   buildServerAttributes,
   buildServerPatch,
   buildSharedAttributes,
+  buildShinobiSnapshotUrl,
   sanitizeCamera
 } = require('../src/camera-assets');
 
@@ -95,4 +96,36 @@ test('camera attribute builders trim strings and ignore blank secret updates', (
     preferredStream: 'hls',
     shinobiMonitorId: 'mon-1'
   });
+});
+
+test('buildShinobiSnapshotUrl builds preview URL without query secrets', () => {
+  assert.equal(buildShinobiSnapshotUrl({
+    shinobiBaseUrl: 'https://shinobi.local/',
+    shinobiApiKey: 'api key',
+    shinobiGroupKey: 'group',
+    shinobiMonitorId: 'monitor/1',
+    shinobiChannel: '1'
+  }), 'https://shinobi.local/api%20key/jpeg/group/monitor%2F1/s.jpg?channel=1');
+});
+
+test('buildShinobiSnapshotUrl rejects unsafe Shinobi base URLs', () => {
+  assert.throws(
+    () => buildShinobiSnapshotUrl({
+      shinobiBaseUrl: 'ftp://shinobi.local',
+      shinobiApiKey: 'api',
+      shinobiGroupKey: 'group',
+      shinobiMonitorId: 'monitor'
+    }),
+    /http or https/
+  );
+
+  assert.throws(
+    () => buildShinobiSnapshotUrl({
+      shinobiBaseUrl: 'https://user:pass@shinobi.local',
+      shinobiApiKey: 'api',
+      shinobiGroupKey: 'group',
+      shinobiMonitorId: 'monitor'
+    }),
+    /embedded credentials/
+  );
 });

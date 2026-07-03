@@ -26,6 +26,7 @@ const CAMERA_SERVER_KEYS = [
 const SAFE_SERVER_KEYS = ['provider', 'preferredStream'];
 const CAMERA_PROVIDERS = new Set(['shinobi']);
 const CAMERA_STREAM_KINDS = new Set(['mjpeg', 'hls', 'mp4']);
+const CAMERA_PREVIEW_TIMEOUT_MS = 10000;
 
 function text(value, max = 512) {
   if (value === undefined || value === null) return undefined;
@@ -51,6 +52,44 @@ function entityId(entity) {
   if (typeof entity.id === 'string') return entity.id;
   if (entity.id && typeof entity.id.id === 'string') return entity.id.id;
   return '';
+}
+
+function sanitizeShinobiBaseUrl(value) {
+  const raw = text(value, 1024);
+  if (!raw) throw new Error('Shinobi base URL is required.');
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('Shinobi base URL must be a valid URL.');
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Shinobi base URL must use http or https.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Shinobi base URL must not contain embedded credentials.');
+  }
+  parsed.hash = '';
+  parsed.search = '';
+  return parsed.toString().replace(/\/$/, '');
+}
+
+function pathPart(value, label) {
+  const raw = text(value, 256);
+  if (!raw) throw new Error(`${label} is required.`);
+  return encodeURIComponent(raw);
+}
+
+function buildShinobiSnapshotUrl(attrs) {
+  const base = sanitizeShinobiBaseUrl(attrs.shinobiBaseUrl);
+  const apiKey = pathPart(attrs.shinobiApiKey, 'Shinobi API key');
+  const groupKey = pathPart(attrs.shinobiGroupKey, 'Shinobi group key');
+  const monitorId = pathPart(attrs.shinobiMonitorId, 'Shinobi monitor ID');
+  const channel = text(attrs.shinobiChannel, 256);
+  const url = `${base}/${apiKey}/jpeg/${groupKey}/${monitorId}/s.jpg`;
+  return channel ? `${url}?channel=${encodeURIComponent(channel)}` : url;
 }
 
 function validateProvider(provider) {
@@ -206,6 +245,27 @@ function createCameraAssetsRouter(deps) {
     return sanitizeCamera(assetResp.data, attrsArrayToMap(sharedResp.data), attrsArrayToMap(serverResp.data));
   }
 
+  async function readCameraServerAttributes(id, userToken) {
+    const [assetResp, serverResp] = await Promise.all([
+      tbGetAsUser(`/api/asset/info/${encodeURIComponent(id)}`, userToken),
+      tbGet(`/api/plugins/telemetry/ASSET/${encodeURIComponent(id)}/values/attributes/SERVER_SCOPE`, {
+        keys: CAMERA_SERVER_KEYS.join(',')
+      })
+    ]);
+    if (assetResp.data?.type !== CAMERA_ASSET_TYPE) {
+      const err = new Error('The selected asset is not a camera asset.');
+      err.status = 404;
+      throw err;
+    }
+    const attrs = attrsArrayToMap(serverResp.data);
+    if (attrs.provider !== 'shinobi') {
+      const err = new Error('Camera preview is only supported for Shinobi cameras.');
+      err.status = 400;
+      throw err;
+    }
+    return attrs;
+  }
+
   router.get('/', async (req, res) => {
     const auth = await requireValidUser(req, res);
     if (!auth) return;
@@ -240,6 +300,37 @@ function createCameraAssetsRouter(deps) {
       return res.json(await readCamera(String(req.params.id || ''), auth.userToken));
     } catch (e) {
       return res.status(e.status || e?.response?.status || 502).json({ error: e.message || 'Failed to read camera' });
+    }
+  });
+
+  router.get('/:id/snapshot', async (req, res) => {
+    const auth = await requireValidUser(req, res);
+    if (!auth) return;
+
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ error: 'Camera id is required.' });
+      const attrs = await readCameraServerAttributes(id, auth.userToken);
+      const snapshotUrl = buildShinobiSnapshotUrl(attrs);
+      const upstream = await ax.get(snapshotUrl, {
+        responseType: 'stream',
+        timeout: CAMERA_PREVIEW_TIMEOUT_MS,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        headers: { accept: 'image/jpeg,image/*;q=0.8,*/*;q=0.5' }
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Type', upstream.headers['content-type'] || 'image/jpeg');
+      upstream.data.on('error', () => {
+        if (!res.headersSent) res.status(502).end();
+        else res.destroy();
+      });
+      req.on('close', () => upstream.data.destroy());
+      return upstream.data.pipe(res);
+    } catch (e) {
+      const status = e.status || e?.response?.status || 502;
+      const message = e.status ? e.message : 'Failed to read camera snapshot.';
+      return res.status(status).json({ error: message });
     }
   });
 
@@ -355,8 +446,10 @@ module.exports = {
   buildServerAttributes,
   buildServerPatch,
   buildSharedAttributes,
+  buildShinobiSnapshotUrl,
   createCameraAssetsRouter,
   sanitizeCamera,
+  sanitizeShinobiBaseUrl,
   validateProvider,
   validateStreamKind
 };
