@@ -27,6 +27,7 @@ const SAFE_SERVER_KEYS = ['provider', 'preferredStream'];
 const CAMERA_PROVIDERS = new Set(['shinobi']);
 const CAMERA_STREAM_KINDS = new Set(['mjpeg', 'hls', 'mp4']);
 const CAMERA_PREVIEW_TIMEOUT_MS = 10000;
+const CAMERA_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 
 function text(value, max = 512) {
   if (value === undefined || value === null) return undefined;
@@ -90,6 +91,28 @@ function buildShinobiSnapshotUrl(attrs) {
   const channel = text(attrs.shinobiChannel, 256);
   const url = `${base}/${apiKey}/jpeg/${groupKey}/${monitorId}/s.jpg`;
   return channel ? `${url}?channel=${encodeURIComponent(channel)}` : url;
+}
+
+function nonImagePreviewError(contentType, body) {
+  const type = String(contentType || '').toLowerCase();
+  const data = Buffer.isBuffer(body) ? body : Buffer.from(body || '');
+  const textBody = data.toString('utf8', 0, Math.min(data.length, 4096)).trim();
+  let upstreamMessage = '';
+
+  if (type.includes('json') && textBody) {
+    try {
+      const parsed = JSON.parse(textBody);
+      upstreamMessage = text(parsed?.msg || parsed?.message || parsed?.error, 256) || '';
+    } catch {
+      upstreamMessage = '';
+    }
+  }
+
+  const err = new Error(upstreamMessage
+    ? `Shinobi rejected camera snapshot request: ${upstreamMessage}.`
+    : `Shinobi returned ${contentType || 'a non-image response'} instead of a camera snapshot.`);
+  err.status = /not authorized/i.test(upstreamMessage) ? 401 : 502;
+  return err;
 }
 
 function validateProvider(provider) {
@@ -313,20 +336,19 @@ function createCameraAssetsRouter(deps) {
       const attrs = await readCameraServerAttributes(id, auth.userToken);
       const snapshotUrl = buildShinobiSnapshotUrl(attrs);
       const upstream = await ax.get(snapshotUrl, {
-        responseType: 'stream',
+        responseType: 'arraybuffer',
         timeout: CAMERA_PREVIEW_TIMEOUT_MS,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
+        maxContentLength: CAMERA_PREVIEW_MAX_BYTES,
+        maxBodyLength: CAMERA_PREVIEW_MAX_BYTES,
         headers: { accept: 'image/jpeg,image/*;q=0.8,*/*;q=0.5' }
       });
+      const contentType = upstream.headers['content-type'] || 'image/jpeg';
+      if (!String(contentType).toLowerCase().startsWith('image/')) {
+        throw nonImagePreviewError(contentType, upstream.data);
+      }
       res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('Content-Type', upstream.headers['content-type'] || 'image/jpeg');
-      upstream.data.on('error', () => {
-        if (!res.headersSent) res.status(502).end();
-        else res.destroy();
-      });
-      req.on('close', () => upstream.data.destroy());
-      return upstream.data.pipe(res);
+      res.setHeader('Content-Type', contentType);
+      return res.send(Buffer.from(upstream.data));
     } catch (e) {
       const status = e.status || e?.response?.status || 502;
       const message = e.status ? e.message : 'Failed to read camera snapshot.';
@@ -448,6 +470,7 @@ module.exports = {
   buildSharedAttributes,
   buildShinobiSnapshotUrl,
   createCameraAssetsRouter,
+  nonImagePreviewError,
   sanitizeCamera,
   sanitizeShinobiBaseUrl,
   validateProvider,

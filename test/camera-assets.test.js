@@ -7,6 +7,7 @@ const {
   buildServerPatch,
   buildSharedAttributes,
   buildShinobiSnapshotUrl,
+  nonImagePreviewError,
   sanitizeCamera
 } = require('../src/camera-assets');
 
@@ -128,4 +129,14 @@ test('buildShinobiSnapshotUrl rejects unsafe Shinobi base URLs', () => {
     }),
     /embedded credentials/
   );
+});
+
+test('nonImagePreviewError maps Shinobi authorization JSON to clean 401', () => {
+  const err = nonImagePreviewError('application/json', Buffer.from(JSON.stringify({
+    ok: false,
+    msg: 'Not Authorized'
+  })));
+
+  assert.equal(err.status, 401);
+  assert.equal(err.message, 'Shinobi rejected camera snapshot request: Not Authorized.');
 });
