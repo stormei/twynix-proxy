@@ -20,12 +20,17 @@ const CAMERA_SERVER_KEYS = [
   'shinobiGroupKey',
   'shinobiMonitorId',
   'shinobiChannel',
+  'directSnapshotUrl',
+  'directAuthMode',
+  'directUsername',
+  'directPassword',
   'preferredStream'
 ];
 
 const SAFE_SERVER_KEYS = ['provider', 'preferredStream'];
-const CAMERA_PROVIDERS = new Set(['shinobi']);
+const CAMERA_PROVIDERS = new Set(['shinobi', 'direct']);
 const CAMERA_STREAM_KINDS = new Set(['mjpeg', 'hls', 'mp4']);
+const DIRECT_AUTH_MODES = new Set(['none', 'basic']);
 const CAMERA_PREVIEW_TIMEOUT_MS = 10000;
 const CAMERA_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -77,6 +82,35 @@ function sanitizeShinobiBaseUrl(value) {
   return parsed.toString().replace(/\/$/, '');
 }
 
+function sanitizeDirectSnapshotUrl(value) {
+  const raw = text(value, 2048);
+  if (!raw) throw new Error('Direct snapshot URL is required.');
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('Direct snapshot URL must be a valid URL.');
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Direct snapshot URL must use http or https.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Direct snapshot URL must not contain embedded credentials.');
+  }
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+function validateDirectAuthMode(mode) {
+  const value = text(mode || 'none', 32) || 'none';
+  if (!DIRECT_AUTH_MODES.has(value)) {
+    throw new Error('Direct camera auth mode must be none or basic.');
+  }
+  return value;
+}
+
 function pathPart(value, label) {
   const raw = text(value, 256);
   if (!raw) throw new Error(`${label} is required.`);
@@ -91,6 +125,22 @@ function buildShinobiSnapshotUrl(attrs) {
   const channel = text(attrs.shinobiChannel, 256);
   const url = `${base}/${apiKey}/jpeg/${groupKey}/${monitorId}/s.jpg`;
   return channel ? `${url}?channel=${encodeURIComponent(channel)}` : url;
+}
+
+function buildDirectSnapshotRequest(attrs) {
+  const url = sanitizeDirectSnapshotUrl(attrs.directSnapshotUrl);
+  const authMode = validateDirectAuthMode(attrs.directAuthMode);
+  const headers = { accept: 'image/jpeg,image/*;q=0.8,*/*;q=0.5' };
+
+  if (authMode === 'basic') {
+    const username = text(attrs.directUsername, 256);
+    const password = text(attrs.directPassword, 512);
+    if (!username) throw new Error('Direct camera username is required for Basic Auth.');
+    if (!password) throw new Error('Direct camera password is required for Basic Auth.');
+    headers.authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+  }
+
+  return { url, headers };
 }
 
 function nonImagePreviewError(contentType, body) {
@@ -110,7 +160,7 @@ function nonImagePreviewError(contentType, body) {
 
   const err = new Error(upstreamMessage
     ? `Shinobi rejected camera snapshot request: ${upstreamMessage}.`
-    : `Shinobi returned ${contentType || 'a non-image response'} instead of a camera snapshot.`);
+    : `Camera provider returned ${contentType || 'a non-image response'} instead of a camera snapshot.`);
   err.status = /not authorized/i.test(upstreamMessage) ? 401 : 502;
   return err;
 }
@@ -118,7 +168,7 @@ function nonImagePreviewError(contentType, body) {
 function validateProvider(provider) {
   const value = text(provider, 32);
   if (!value || !CAMERA_PROVIDERS.has(value)) {
-    throw new Error('Camera provider is required. Supported provider: shinobi.');
+    throw new Error('Camera provider is required. Supported providers: shinobi, direct.');
   }
   return value;
 }
@@ -150,17 +200,39 @@ function buildServerAttributes(body = {}, { requireSecrets = false } = {}) {
   const preferredStream = validateStreamKind(body.preferredStream);
   const attrs = { provider, preferredStream };
 
-  for (const key of ['shinobiBaseUrl', 'shinobiApiKey', 'shinobiGroupKey', 'shinobiMonitorId', 'shinobiChannel']) {
-    const value = text(body[key], key === 'shinobiBaseUrl' ? 1024 : 256);
+  for (const key of [
+    'shinobiBaseUrl',
+    'shinobiApiKey',
+    'shinobiGroupKey',
+    'shinobiMonitorId',
+    'shinobiChannel',
+    'directSnapshotUrl',
+    'directAuthMode',
+    'directUsername',
+    'directPassword'
+  ]) {
+    const value = text(body[key], key === 'directSnapshotUrl' ? 2048 : key === 'shinobiBaseUrl' ? 1024 : 512);
     if (value !== undefined) attrs[key] = value;
   }
 
   if (requireSecrets) {
     const missing = [];
-    if (!attrs.shinobiBaseUrl) missing.push('Shinobi base URL');
-    if (!attrs.shinobiApiKey) missing.push('Shinobi API key');
-    if (!attrs.shinobiGroupKey) missing.push('Shinobi group key');
-    if (!attrs.shinobiMonitorId) missing.push('Shinobi monitor ID');
+    if (provider === 'shinobi') {
+      if (!attrs.shinobiBaseUrl) missing.push('Shinobi base URL');
+      if (!attrs.shinobiApiKey) missing.push('Shinobi API key');
+      if (!attrs.shinobiGroupKey) missing.push('Shinobi group key');
+      if (!attrs.shinobiMonitorId) missing.push('Shinobi monitor ID');
+    }
+    if (provider === 'direct') {
+      if (!attrs.directSnapshotUrl) missing.push('Direct snapshot URL');
+      if (attrs.directSnapshotUrl) attrs.directSnapshotUrl = sanitizeDirectSnapshotUrl(attrs.directSnapshotUrl);
+      const authMode = validateDirectAuthMode(attrs.directAuthMode);
+      attrs.directAuthMode = authMode;
+      if (authMode === 'basic') {
+        if (!attrs.directUsername) missing.push('Direct camera username');
+        if (!attrs.directPassword) missing.push('Direct camera password');
+      }
+    }
     if (missing.length) throw new Error(`Missing required camera field(s): ${missing.join(', ')}.`);
   }
 
@@ -172,10 +244,21 @@ function buildServerPatch(body = {}) {
   if (body.provider !== undefined) attrs.provider = validateProvider(body.provider);
   if (body.preferredStream !== undefined) attrs.preferredStream = validateStreamKind(body.preferredStream);
 
-  for (const key of ['shinobiBaseUrl', 'shinobiApiKey', 'shinobiGroupKey', 'shinobiMonitorId', 'shinobiChannel']) {
-    const value = text(body[key], key === 'shinobiBaseUrl' ? 1024 : 256);
+  for (const key of [
+    'shinobiBaseUrl',
+    'shinobiApiKey',
+    'shinobiGroupKey',
+    'shinobiMonitorId',
+    'shinobiChannel',
+    'directSnapshotUrl',
+    'directAuthMode',
+    'directUsername',
+    'directPassword'
+  ]) {
+    const value = text(body[key], key === 'directSnapshotUrl' ? 2048 : key === 'shinobiBaseUrl' ? 1024 : 512);
     if (value !== undefined) attrs[key] = value;
   }
+  if (attrs.directAuthMode !== undefined) attrs.directAuthMode = validateDirectAuthMode(attrs.directAuthMode);
   return attrs;
 }
 
@@ -281,11 +364,6 @@ function createCameraAssetsRouter(deps) {
       throw err;
     }
     const attrs = attrsArrayToMap(serverResp.data);
-    if (attrs.provider !== 'shinobi') {
-      const err = new Error('Camera preview is only supported for Shinobi cameras.');
-      err.status = 400;
-      throw err;
-    }
     return attrs;
   }
 
@@ -334,13 +412,16 @@ function createCameraAssetsRouter(deps) {
       const id = String(req.params.id || '').trim();
       if (!id) return res.status(400).json({ error: 'Camera id is required.' });
       const attrs = await readCameraServerAttributes(id, auth.userToken);
-      const snapshotUrl = buildShinobiSnapshotUrl(attrs);
-      const upstream = await ax.get(snapshotUrl, {
+      const provider = validateProvider(attrs.provider);
+      const snapshot = provider === 'direct'
+        ? buildDirectSnapshotRequest(attrs)
+        : { url: buildShinobiSnapshotUrl(attrs), headers: { accept: 'image/jpeg,image/*;q=0.8,*/*;q=0.5' } };
+      const upstream = await ax.get(snapshot.url, {
         responseType: 'arraybuffer',
         timeout: CAMERA_PREVIEW_TIMEOUT_MS,
         maxContentLength: CAMERA_PREVIEW_MAX_BYTES,
         maxBodyLength: CAMERA_PREVIEW_MAX_BYTES,
-        headers: { accept: 'image/jpeg,image/*;q=0.8,*/*;q=0.5' }
+        headers: snapshot.headers
       });
       const contentType = upstream.headers['content-type'] || 'image/jpeg';
       if (!String(contentType).toLowerCase().startsWith('image/')) {
@@ -468,10 +549,12 @@ module.exports = {
   buildServerAttributes,
   buildServerPatch,
   buildSharedAttributes,
+  buildDirectSnapshotRequest,
   buildShinobiSnapshotUrl,
   createCameraAssetsRouter,
   nonImagePreviewError,
   sanitizeCamera,
+  sanitizeDirectSnapshotUrl,
   sanitizeShinobiBaseUrl,
   validateProvider,
   validateStreamKind

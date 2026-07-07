@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   CAMERA_ASSET_TYPE,
+  buildDirectSnapshotRequest,
   buildServerAttributes,
   buildServerPatch,
   buildSharedAttributes,
@@ -74,6 +75,35 @@ test('buildServerAttributes validates required Shinobi fields on create', () => 
   assert.equal(attrs.shinobiApiKey, 'api');
 });
 
+test('buildServerAttributes validates required direct snapshot fields on create', () => {
+  assert.throws(
+    () => buildServerAttributes({ provider: 'direct', preferredStream: 'mjpeg' }, { requireSecrets: true }),
+    /Direct snapshot URL/
+  );
+
+  assert.throws(
+    () => buildServerAttributes({
+      provider: 'direct',
+      preferredStream: 'mjpeg',
+      directSnapshotUrl: 'http://camera.local/snapshot.jpg',
+      directAuthMode: 'basic',
+      directUsername: 'operator'
+    }, { requireSecrets: true }),
+    /Direct camera password/
+  );
+
+  const attrs = buildServerAttributes({
+    provider: 'direct',
+    preferredStream: 'mjpeg',
+    directSnapshotUrl: 'http://camera.local/snapshot.jpg',
+    directAuthMode: 'none'
+  }, { requireSecrets: true });
+
+  assert.equal(attrs.provider, 'direct');
+  assert.equal(attrs.directSnapshotUrl, 'http://camera.local/snapshot.jpg');
+  assert.equal(attrs.directAuthMode, 'none');
+});
+
 test('camera attribute builders trim strings and ignore blank secret updates', () => {
   assert.deepEqual(buildSharedAttributes({
     label: '  Packaging  ',
@@ -126,6 +156,26 @@ test('buildShinobiSnapshotUrl rejects unsafe Shinobi base URLs', () => {
       shinobiApiKey: 'api',
       shinobiGroupKey: 'group',
       shinobiMonitorId: 'monitor'
+    }),
+    /embedded credentials/
+  );
+});
+
+test('buildDirectSnapshotRequest supports optional Basic Auth without embedded URL credentials', () => {
+  const req = buildDirectSnapshotRequest({
+    directSnapshotUrl: 'http://camera.local/snapshot.jpg?quality=80',
+    directAuthMode: 'basic',
+    directUsername: 'viewer',
+    directPassword: 'secret'
+  });
+
+  assert.equal(req.url, 'http://camera.local/snapshot.jpg?quality=80');
+  assert.equal(req.headers.authorization, 'Basic dmlld2VyOnNlY3JldA==');
+
+  assert.throws(
+    () => buildDirectSnapshotRequest({
+      directSnapshotUrl: 'http://user:pass@camera.local/snapshot.jpg',
+      directAuthMode: 'none'
     }),
     /embedded credentials/
   );
