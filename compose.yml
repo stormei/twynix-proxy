@@ -1,0 +1,40 @@
+services:
+  twynix-proxy:
+    image: twynix-proxy:${TWYNIX_PROXY_VERSION}
+    container_name: twynix-proxy
+
+    restart: unless-stopped
+
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    volumes:
+      - twynix-proxy-data:/app/data
+      - /secure/secrets/tb_admin_password:/run/secrets/tb_admin_password:ro
+      - /secure/secrets/iotdb_auth:/run/secrets/iotdb_auth:ro
+      - /secure/secrets/internal_proxy_secret:/run/secrets/internal_proxy_secret:ro
+      - /secure/secrets/audit_hmac_secret:/run/secrets/audit_hmac_secret:ro
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    env_file:
+      - ./production.env
+
+    ports:
+      - "8787:8787"
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  twynix-proxy-data:
+    external: true
