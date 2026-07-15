@@ -1875,26 +1875,28 @@ const tbProxy = createProxyMiddleware({
   proxyTimeout: 30000,
   timeout: 35000,
   pathRewrite: rewriteThingsBoardRpcPath,
-  onProxyReq: (proxyReq, req) => {
-    console.log(`→ Proxying ${req.method} ${req.url}`);
-    proxyReq.removeHeader('x-twynix-internal-admin');
-    proxyReq.removeHeader('x-forwarded-user');
-    proxyReq.removeHeader('x-forwarded-email');
-    proxyReq.removeHeader('x-forwarded-roles');
-    proxyReq.removeHeader('x-real-user');
-    proxyReq.removeHeader('x-user-id');
-    proxyReq.removeHeader('x-tenant-id');
-    fixRequestBody(proxyReq, req);
-  },
-  onProxyRes: (proxyRes, req) => {
-    // Helpful to debug 504 vs TB timeout
-    console.log(`← TB ${req.method} ${req.url} -> ${proxyRes.statusCode}`);
-  },
-  onError: (err, req, res) => {
-    console.error('Proxy error:', err.message);
-    serviceState.lastThingsBoardError = err.message || String(err);
-    if (!res.headersSent) res.status(502).send('Bad Gateway');
-  },
+  on: {
+    proxyReq: (proxyReq, req) => {
+      console.log(`→ Proxying ${req.method} ${req.url}`);
+      proxyReq.removeHeader('x-twynix-internal-admin');
+      proxyReq.removeHeader('x-forwarded-user');
+      proxyReq.removeHeader('x-forwarded-email');
+      proxyReq.removeHeader('x-forwarded-roles');
+      proxyReq.removeHeader('x-real-user');
+      proxyReq.removeHeader('x-user-id');
+      proxyReq.removeHeader('x-tenant-id');
+      fixRequestBody(proxyReq, req);
+    },
+    proxyRes: (proxyRes, req) => {
+      // Helpful to debug 504 vs TB timeout
+      console.log(`← TB ${req.method} ${req.url} -> ${proxyRes.statusCode}`);
+    },
+    error: (err, req, res) => {
+      console.error('Proxy error:', err.message);
+      serviceState.lastThingsBoardError = err.message || String(err);
+      if (!res.headersSent) res.status(502).send('Bad Gateway');
+    }
+  }
 });
 
 const tbWsProxy = createProxyMiddleware({
@@ -1904,21 +1906,23 @@ const tbWsProxy = createProxyMiddleware({
   ws: true,
   logLevel: 'debug',
   pathRewrite: (path_) => path_,
-  onProxyReqWs: (proxyReq, req) => {
-    console.log(`-> WS proxying ${req.url}`);
-    proxyReq.removeHeader('x-twynix-internal-admin');
-    proxyReq.removeHeader('x-forwarded-user');
-    proxyReq.removeHeader('x-forwarded-email');
-    proxyReq.removeHeader('x-forwarded-roles');
-    proxyReq.removeHeader('x-real-user');
-    proxyReq.removeHeader('x-user-id');
-    proxyReq.removeHeader('x-tenant-id');
-  },
-  onError: (err, req, socket) => {
-    console.error('WebSocket proxy error:', err.message);
-    serviceState.lastThingsBoardError = err.message || String(err);
-    socket.destroy();
-  },
+  on: {
+    proxyReqWs: (proxyReq, req) => {
+      console.log(`-> WS proxying ${req.url}`);
+      proxyReq.removeHeader('x-twynix-internal-admin');
+      proxyReq.removeHeader('x-forwarded-user');
+      proxyReq.removeHeader('x-forwarded-email');
+      proxyReq.removeHeader('x-forwarded-roles');
+      proxyReq.removeHeader('x-real-user');
+      proxyReq.removeHeader('x-user-id');
+      proxyReq.removeHeader('x-tenant-id');
+    },
+    error: (err, req, socket) => {
+      console.error('WebSocket proxy error:', err.message);
+      serviceState.lastThingsBoardError = err.message || String(err);
+      socket.destroy();
+    }
+  }
 });
 
 
