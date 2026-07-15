@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const { createProxyMiddleware, fixRequestBody } = require('http-proxy-middleware');
+const { rewriteThingsBoardRpcPath, dispatchRpcAudit } = require('./src/rpc-forwarding');
 const axios = require('axios');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
@@ -434,6 +435,17 @@ async function emitAuditEvent(req, ev) {
     serviceState.lastAuditError = e.message || String(e);
     throw e;
   }
+}
+
+async function emitRpcAuditEvent(req, ev) {
+  return dispatchRpcAudit({
+    requireAudit: config.RPC_REQUIRE_AUDIT,
+    emitAudit: emitAuditEvent,
+    onError: (error) => {
+      serviceState.lastAuditError = error?.message || String(error);
+      console.error('[RPC] Deferred audit failed:', serviceState.lastAuditError);
+    }
+  }, req, ev);
 }
 
 /* -------------------------------------------
@@ -1179,7 +1191,7 @@ async function rpcPermissionMiddleware(req, res, next) {
       rpcMethod,
       requestId: req.twynixRequestId || ''
     });
-    const auditResult = await emitAuditEvent(req, {
+    const auditResult = await emitRpcAuditEvent(req, {
       type: `rpc_${mode}`, outcome: 'denied', reason: bodyError,
       userId: '', entityType: 'DEVICE', entityId: deviceId,
       method: req.method, path: req.path
@@ -1197,7 +1209,7 @@ async function rpcPermissionMiddleware(req, res, next) {
       rpcMethod,
       requestId: req.twynixRequestId || ''
     });
-    await emitAuditEvent(req, {
+    await emitRpcAuditEvent(req, {
       type: `rpc_${mode}`, outcome: 'denied', reason: 'Missing or invalid X-Authorization header',
       userId: '', entityType: 'DEVICE', entityId: deviceId,
       method: req.method, path: req.path
@@ -1218,7 +1230,7 @@ async function rpcPermissionMiddleware(req, res, next) {
       rpcMethod,
       requestId: req.twynixRequestId || ''
     });
-    await emitAuditEvent(req, {
+    await emitRpcAuditEvent(req, {
       type: `rpc_${mode}`, outcome: 'denied', reason: 'Invalid JWT token',
       userId: '', entityType: 'DEVICE', entityId: deviceId,
       method: req.method, path: req.path
@@ -1234,7 +1246,7 @@ async function rpcPermissionMiddleware(req, res, next) {
       rpcMethod,
       requestId: req.twynixRequestId || ''
     });
-    await emitAuditEvent(req, {
+    await emitRpcAuditEvent(req, {
       type: `rpc_${mode}`, outcome: 'denied', reason: 'User ID not found in token',
       userId: '', entityType: 'DEVICE', entityId: deviceId,
       method: req.method, path: req.path
@@ -1256,7 +1268,7 @@ async function rpcPermissionMiddleware(req, res, next) {
         userId,
         requestId: req.twynixRequestId || ''
       });
-      await emitAuditEvent(req, {
+      await emitRpcAuditEvent(req, {
         type: `rpc_${mode}`, outcome: 'denied', reason: 'No security attribute found',
         userId, entityType: 'DEVICE', entityId: deviceId,
         method: req.method, path: req.path
@@ -1276,7 +1288,7 @@ async function rpcPermissionMiddleware(req, res, next) {
         userId,
         requestId: req.twynixRequestId || ''
       });
-      await emitAuditEvent(req, {
+      await emitRpcAuditEvent(req, {
         type: `rpc_${mode}`, outcome: 'error', reason: 'Failed to parse security attribute JSON',
         userId, entityType: 'DEVICE', entityId: deviceId,
         method: req.method, path: req.path
@@ -1293,7 +1305,7 @@ async function rpcPermissionMiddleware(req, res, next) {
         userId,
         requestId: req.twynixRequestId || ''
       });
-      await emitAuditEvent(req, {
+      await emitRpcAuditEvent(req, {
         type: `rpc_${mode}`, outcome: 'denied', reason: 'No control access',
         userId, entityType: 'DEVICE', entityId: deviceId,
         method: req.method, path: req.path
@@ -1310,7 +1322,7 @@ async function rpcPermissionMiddleware(req, res, next) {
         userId,
         requestId: req.twynixRequestId || ''
       });
-      await emitAuditEvent(req, {
+      await emitRpcAuditEvent(req, {
         type: `rpc_${mode}`, outcome: 'denied', reason: 'RPC rate limit exceeded',
         userId, entityType: 'DEVICE', entityId: deviceId,
         method: req.method, path: req.path
@@ -1326,7 +1338,7 @@ async function rpcPermissionMiddleware(req, res, next) {
       requestId: req.twynixRequestId || ''
     });
 
-    const auditResult = await emitAuditEvent(req, {
+    const auditResult = await emitRpcAuditEvent(req, {
       type: `rpc_${mode}`, outcome: 'allowed', reason: 'device_acl',
       userId, entityType: 'DEVICE', entityId: deviceId,
       method: req.method, path: req.path
@@ -1344,7 +1356,7 @@ async function rpcPermissionMiddleware(req, res, next) {
       userId,
       requestId: req.twynixRequestId || ''
     });
-    await emitAuditEvent(req, {
+    await emitRpcAuditEvent(req, {
       type: `rpc_${mode}`, outcome: 'error', reason: 'Failed to verify permissions',
       userId, entityType: 'DEVICE', entityId: deviceId,
       method: req.method, path: req.path
@@ -1862,7 +1874,7 @@ const tbProxy = createProxyMiddleware({
   logLevel: 'debug',
   proxyTimeout: 30000,
   timeout: 35000,
-  pathRewrite: (path_) => path_,
+  pathRewrite: rewriteThingsBoardRpcPath,
   onProxyReq: (proxyReq, req) => {
     console.log(`→ Proxying ${req.method} ${req.url}`);
     proxyReq.removeHeader('x-twynix-internal-admin');
