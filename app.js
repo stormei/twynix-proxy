@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const helmet = require('helmet'); // ← MUST-DO: security headers
 const { createTwynixOplogRouter, createOplogEmitter } = require('./src/twynix-oplog');
 const { createCameraAssetsRouter } = require('./src/camera-assets');
+const { createAlarmAckGuard } = require('./src/alarm-ack-guard');
 const { createTelemetryWriteGuard } = require('./src/telemetry-write-policy');
 const { createTrendQueryHandler } = require('./src/iotdb-trend-query');
 const { createIotdbSchemaHandler } = require('./src/iotdb-schema');
@@ -1942,6 +1943,13 @@ if (config.RPC_ACL_ENABLED) {
   console.log('[RPC] ACL middleware DISABLED (pure forward)');
 }
 
+app.use(createAlarmAckGuard({
+  ax,
+  thingsboardUrl: config.THINGSBOARD_URL,
+  requireValidUser,
+  emitAuditEvent
+}));
+
 /* -------------------------------------------
    Keep local routes unproxied; everything else → TB
 -------------------------------------------- */
@@ -1953,6 +1961,9 @@ app.use((req, res, next) => {
   const policy = proxyRoutePolicy(req.method, req.path);
   if (!policy.allowed) {
     return res.status(403).json({ error: 'Proxy route is not allowlisted' });
+  }
+  if (policy.guard && req.__twynixProxyGuard !== policy.guard) {
+    return res.status(403).json({ error: 'Proxy route guard was not satisfied' });
   }
 
   const bodySizeError = validateProxyBodySize(req, config.PROXY_MAX_BODY_BYTES);

@@ -391,6 +391,11 @@ test('proxy route policy denies unsafe routes by default', () => {
   assert.equal(policy('DELETE', '/api/user/11111111-1111-1111-1111-111111111111').allowed, false);
   assert.equal(policy('POST', '/api/ruleChain').allowed, false);
   assert.equal(policy('POST', '/api/plugins/rpc/oneway/11111111-1111-1111-1111-111111111111').allowed, true);
+  assert.deepEqual(
+    policy('POST', '/api/alarm/11111111-2222-4333-8444-555555555555/ack'),
+    { allowed: true, public: false, guard: 'alarmAck' }
+  );
+  assert.equal(policy('POST', '/api/alarm/not-a-uuid/ack').allowed, false);
 });
 
 test('proxied write body size policy blocks oversized and chunked bodies', () => {

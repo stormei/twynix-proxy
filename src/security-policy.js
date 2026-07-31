@@ -1,10 +1,16 @@
 const UUID_RX = '[0-9a-fA-F-]{36}';
+const CANONICAL_UUID_RX = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 
 const DEFAULT_PROXY_RULES = [
   { methods: ['POST'], rx: /^\/api\/auth\/login\/?$/i, public: true },
   { methods: ['GET', 'HEAD'], rx: /^\/api\/auth\/user\/?$/i },
 
   { methods: ['GET', 'HEAD'], rx: new RegExp(`^/api/(device|asset|alarm)/${UUID_RX}/?$`, 'i') },
+  {
+    methods: ['POST'],
+    rx: new RegExp(`^/api/alarm/${CANONICAL_UUID_RX}/ack/?$`, 'i'),
+    guard: 'alarmAck'
+  },
   { methods: ['GET', 'HEAD'], rx: /^\/api\/tenant\/(devices|deviceInfos|assets|assetInfos|alarms|dashboards|dashboardInfos)\/?$/i },
   { methods: ['GET', 'HEAD'], rx: new RegExp(`^/api/customer/${UUID_RX}/(devices|deviceInfos|assets|assetInfos|alarms|dashboards|dashboardInfos)/?$`, 'i') },
   { methods: ['GET', 'HEAD'], rx: /^\/api\/(device|asset)\/types\/?$/i },
@@ -120,7 +126,9 @@ function createProxyRoutePolicy(extraRulesSpec) {
 
     const match = rules.find((rule) => rule.methods.includes(normalizedMethod) && rule.rx.test(path));
     if (!match) return { allowed: false, public: false };
-    return { allowed: true, public: match.public === true };
+    const result = { allowed: true, public: match.public === true };
+    if (match.guard) result.guard = match.guard;
+    return result;
   };
 }
 

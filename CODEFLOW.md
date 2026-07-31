@@ -20,6 +20,8 @@ Til slutt holdes noen ruter lokale i proxyen:
 
 Vanlige `GET`/`HEAD`-kall proxes videre etter at proxyen har validert brukerens JWT; ThingsBoard tar selve autorisasjonen. Skrivende kall må matche proxyens eksplisitte allowlist og relevante middleware-policyer før de proxes videre.
 
+`POST /api/alarm/:alarmId/ack` er en særskilt allowlistet skriveoperasjon. Før ACK videresendes, validerer proxyen brukerens JWT, leser den konkrete alarmen fra ThingsBoard med brukerens eget token og avviser forespørselen dersom alarmens tenant ikke matcher tenant i tokenet. En vellykket lesing bekrefter samtidig at ThingsBoard gir brukeren tilgang til alarmen.
+
 # Auth flow
 
 Brukerautentisering baserer seg på `X-Authorization: Bearer <jwt>`. Proxyen verifiserer ikke signaturen lokalt; i stedet kalles ThingsBoard sitt `/api/auth/user` via `assertTokenValid(userToken)`. Resultatet caches kort i `tokenValidityCache`, begrenset av JWT-exp og maks 60 sekunder.
