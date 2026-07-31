@@ -11,6 +11,9 @@ const DEFAULT_PROXY_RULES = [
     rx: new RegExp(`^/api/alarm/${CANONICAL_UUID_RX}/ack/?$`, 'i'),
     guard: 'alarmAck'
   },
+  // Authenticated ThingsBoard alarm search. Keep this deliberately exact:
+  // nearby alarmsQuery endpoints and other POST /api/** routes stay denied.
+  { methods: ['POST'], rx: /^\/api\/alarmsQuery\/find$/ },
   { methods: ['GET', 'HEAD'], rx: /^\/api\/tenant\/(devices|deviceInfos|assets|assetInfos|alarms|dashboards|dashboardInfos)\/?$/i },
   { methods: ['GET', 'HEAD'], rx: new RegExp(`^/api/customer/${UUID_RX}/(devices|deviceInfos|assets|assetInfos|alarms|dashboards|dashboardInfos)/?$`, 'i') },
   { methods: ['GET', 'HEAD'], rx: /^\/api\/(device|asset)\/types\/?$/i },

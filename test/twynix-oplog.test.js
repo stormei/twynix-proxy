@@ -387,6 +387,18 @@ test('proxy route policy denies unsafe routes by default', () => {
   assert.equal(policy('POST', '/api/relations').allowed, true);
   assert.equal(policy('DELETE', '/api/relation').allowed, true);
   assert.equal(policy('POST', '/api/relation/delete').allowed, true);
+  assert.deepEqual(
+    policy('POST', '/api/alarmsQuery/find'),
+    { allowed: true, public: false }
+  );
+  assert.deepEqual(
+    policy('POST', '/api/alarmsQuery/find?page=0&pageSize=100'),
+    { allowed: true, public: false }
+  );
+  assert.equal(policy('GET', '/api/alarmsQuery/find').allowed, true);
+  assert.equal(policy('POST', '/api/alarmsQuery/find/').allowed, false);
+  assert.equal(policy('POST', '/api/alarmsQuery/delete').allowed, false);
+  assert.equal(policy('POST', '/api/alarmsquery/find').allowed, false);
   assert.deepEqual(policy('GET', '/api/any/thingsboard/read/path'), { allowed: true, public: false });
   assert.equal(policy('DELETE', '/api/user/11111111-1111-1111-1111-111111111111').allowed, false);
   assert.equal(policy('POST', '/api/ruleChain').allowed, false);
