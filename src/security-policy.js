@@ -1,7 +1,16 @@
 const UUID_RX = '[0-9a-fA-F-]{36}';
 const CANONICAL_UUID_RX = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 
+// Shared with management authorization so adding a proxy route cannot omit its
+// role check. ThingsBoard still enforces entity ownership using the caller's JWT.
+const TWIN_CONFIGURATION_RULES = [
+  { methods: ['POST'], rx: /^\/api\/calculatedField$/, requiredAuthority: 'TENANT_ADMIN' },
+  { methods: ['POST'], rx: /^\/api\/calculatedField\/testScript$/, requiredAuthority: 'TENANT_ADMIN' },
+  { methods: ['POST'], rx: /^\/api\/alarm\/rule\/testScript$/, requiredAuthority: 'TENANT_ADMIN' }
+];
+
 const DEFAULT_PROXY_RULES = [
+  ...TWIN_CONFIGURATION_RULES,
   { methods: ['POST'], rx: /^\/api\/auth\/login\/?$/i, public: true },
   { methods: ['GET', 'HEAD'], rx: /^\/api\/auth\/user\/?$/i },
 
@@ -135,6 +144,11 @@ function createProxyRoutePolicy(extraRulesSpec) {
   };
 }
 
+function hasAllowedManagementRole(authorities, allowedRoles, policy) {
+  return authorities.some((authority) => allowedRoles.includes(authority))
+    && (!policy.requiredAuthority || authorities.includes(policy.requiredAuthority));
+}
+
 function isReadOnlyIotdbQuery(body) {
   const query = body && typeof body === 'object'
     ? String(body.sql || body.query || body.statement || '').trim()
@@ -155,6 +169,8 @@ function clampText(value, maxChars) {
 
 module.exports = {
   DEFAULT_PROXY_RULES,
+  TWIN_CONFIGURATION_RULES,
+  hasAllowedManagementRole,
   STRIPPED_INBOUND_HEADERS,
   clampText,
   createProxyRoutePolicy,

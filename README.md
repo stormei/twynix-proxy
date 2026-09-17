@@ -83,6 +83,30 @@ The service listens on port `8787` by default.
 
 ## Configuration
 
+### Twin configuration routes (ThingsBoard CE 4.3.1.5)
+
+The twin deployment workflow permits these exact authenticated POST routes:
+
+- `/api/calculatedField/testScript` — validate a calculated-field script.
+- `/api/alarm/rule/testScript` — validate an alarm condition script.
+- `/api/calculatedField` — create or update the compiled calculated field or alarm.
+
+All three also pass the management-write JWT validation and audit middleware.
+They require `TENANT_ADMIN` and membership in `MGMT_ALLOWED_ROLES`; broader
+management-role configuration does not relax the tenant-admin requirement.
+Requests retain the caller's token, so ThingsBoard enforces tenant and entity
+authorization. No service-account token is substituted.
+
+The existing authenticated GET policy covers field listings, relations and the
+deployment manifest. Relation and server-attribute writes retain their existing
+management policies. Calculated-field deletion, recalculation and other write
+endpoints are not enabled by this change.
+
+Rebuild/restart the deployed proxy from this revision for the route change to
+take effect; changing the frontend alone cannot update the running allowlist.
+First verify **Preview deployment**. Deploying a twin remains a separate,
+explicit operation that can activate calculations and alarms.
+
 Configuration is read from environment variables. In production, prefer file-based secrets using `*_FILE` variables.
 
 Required core settings:

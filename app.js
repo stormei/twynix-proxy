@@ -22,6 +22,8 @@ const { validateConfig } = require('./src/config-validation');
 const { validateProxyBodySize } = require('./src/request-size-policy');
 const { buildRpcPolicy, validateRpcBody } = require('./src/rpc-policy');
 const {
+  TWIN_CONFIGURATION_RULES,
+  hasAllowedManagementRole,
   clampText,
   createProxyRoutePolicy,
   getBearerTokenFromHeaders,
@@ -1371,6 +1373,7 @@ async function rpcPermissionMiddleware(req, res, next) {
 ------------------------------------------------------------------ */
 const UUID_RX = '[0-9a-fA-F-]{36}';
 const MGMT_POLICIES = [
+  ...TWIN_CONFIGURATION_RULES,
   // Create Asset
   { rx: new RegExp(`^/api/asset/?$`, 'i'), methods: ['POST'] },
   // Update/Delete Asset by ID
@@ -1387,8 +1390,8 @@ function pathMethodMatchesPolicy(path_, method) {
   method = method.toUpperCase();
   return MGMT_POLICIES.find(p => p.methods.includes(method) && p.rx.test(path_));
 }
-function hasAllowedRole(authorities) {
-  return authorities.some(a => config.MGMT_ALLOWED_ROLES.includes(a));
+function hasAllowedRole(authorities, policy) {
+  return hasAllowedManagementRole(authorities, config.MGMT_ALLOWED_ROLES, policy);
 }
 async function writePolicyMiddleware(req, res, next) {
   const policy = pathMethodMatchesPolicy(req.path, req.method);
@@ -1411,7 +1414,7 @@ async function writePolicyMiddleware(req, res, next) {
     };
     const authorities = getUserAuthoritiesFromToken(userToken);
 
-    if (!hasAllowedRole(authorities)) {
+    if (!hasAllowedRole(authorities, policy)) {
       await emitAuditEvent(req, {
         type: 'mgmt_write', outcome: 'denied', reason: 'Insufficient role',
         method: req.method, path: req.path
