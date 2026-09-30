@@ -4,6 +4,10 @@ const CANONICAL_UUID_RX = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA
 // Shared with management authorization so adding a proxy route cannot omit its
 // role check. ThingsBoard still enforces entity ownership using the caller's JWT.
 const TWIN_CONFIGURATION_RULES = [
+  // Factory availability provisioning; both proxy routing and management auth
+  // consume this list. Keep tenant administration required on both endpoints.
+  { methods: ['POST'], rx: /^\/api\/ruleChain$/, requiredAuthority: 'TENANT_ADMIN' },
+  { methods: ['POST'], rx: /^\/api\/ruleChain\/metadata$/, requiredAuthority: 'TENANT_ADMIN' },
   { methods: ['POST'], rx: /^\/api\/calculatedField$/, requiredAuthority: 'TENANT_ADMIN' },
   { methods: ['POST'], rx: /^\/api\/calculatedField\/testScript$/, requiredAuthority: 'TENANT_ADMIN' },
   { methods: ['POST'], rx: /^\/api\/alarm\/rule\/testScript$/, requiredAuthority: 'TENANT_ADMIN' }

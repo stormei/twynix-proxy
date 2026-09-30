@@ -83,15 +83,17 @@ The service listens on port `8787` by default.
 
 ## Configuration
 
-### Twin configuration routes (ThingsBoard CE 4.3.1.5)
+### Twin configuration and Rule Chain provisioning routes
 
-The twin deployment workflow permits these exact authenticated POST routes:
+Twin deployment and Factory availability provisioning permit these exact authenticated POST routes:
 
+- `/api/ruleChain` — create or update a Rule Chain.
+- `/api/ruleChain/metadata` — save its nodes and connections.
 - `/api/calculatedField/testScript` — validate a calculated-field script.
 - `/api/alarm/rule/testScript` — validate an alarm condition script.
 - `/api/calculatedField` — create or update the compiled calculated field or alarm.
 
-All three also pass the management-write JWT validation and audit middleware.
+All five also pass the management-write JWT validation and audit middleware.
 They require `TENANT_ADMIN` and membership in `MGMT_ALLOWED_ROLES`; broader
 management-role configuration does not relax the tenant-admin requirement.
 Requests retain the caller's token, so ThingsBoard enforces tenant and entity
@@ -100,7 +102,8 @@ authorization. No service-account token is substituted.
 The existing authenticated GET policy covers field listings, relations and the
 deployment manifest. Relation and server-attribute writes retain their existing
 management policies. Calculated-field deletion, recalculation and other write
-endpoints are not enabled by this change.
+endpoints are not enabled by this change. Rule Chain deletion, bulk import and
+script-test write routes remain denied; only the two exact save endpoints are added.
 
 Rebuild/restart the deployed proxy from this revision for the route change to
 take effect; changing the frontend alone cannot update the running allowlist.

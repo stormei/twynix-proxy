@@ -11,6 +11,8 @@ const {
 } = require('../src/security-policy');
 
 const routes = [
+  '/api/ruleChain',
+  '/api/ruleChain/metadata',
   '/api/calculatedField',
   '/api/calculatedField/testScript',
   '/api/alarm/rule/testScript'
@@ -25,7 +27,7 @@ test('twin configuration permits only the required authenticated POST routes', (
     for (const suffix of ['/', '/delete', '/recalculate', 'Other']) assert.equal(policy('POST', route + suffix).allowed, false);
     assert.equal(policy('POST', route.toLowerCase()).allowed, false);
   }
-  for (const route of ['/api/calculatedFields', '/api/alarm/rule', '/api/ruleChain', '/api/calculatedField/11111111-2222-4333-8444-555555555555']) {
+  for (const route of ['/api/calculatedFields', '/api/alarm/rule', '/api/ruleChains/import', '/api/ruleChain/testScript', '/api/ruleChain/metadata/extra', '/api/calculatedField/11111111-2222-4333-8444-555555555555']) {
     assert.equal(policy('POST', route).allowed, false);
   }
 });
@@ -78,12 +80,14 @@ function managementMiddleware(options = {}) {
   return { run: context.writePolicyMiddleware, events };
 }
 
-test('management middleware authenticates, authorizes and audits all three twin routes', async () => {
+test('management middleware authenticates, authorizes and audits all twin configuration routes', async () => {
   for (const route of routes) {
     for (const scenario of [
       { token: true, expected: 200 },
       { token: false, expected: 401 },
       { token: true, authorities: ['CUSTOMER_USER'], roles: ['CUSTOMER_USER'], expected: 403 },
+      { token: true, authorities: ['SYS_ADMIN'], roles: ['SYS_ADMIN', 'TENANT_ADMIN'], expected: 403 },
+      { token: true, authorities: ['TENANT_ADMIN'], roles: ['CUSTOMER_USER'], expected: 403 },
       { token: true, invalid: true, expected: 500 }
     ]) {
       const { run, events } = managementMiddleware(scenario);

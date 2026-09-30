@@ -401,7 +401,10 @@ test('proxy route policy denies unsafe routes by default', () => {
   assert.equal(policy('POST', '/api/alarmsquery/find').allowed, false);
   assert.deepEqual(policy('GET', '/api/any/thingsboard/read/path'), { allowed: true, public: false });
   assert.equal(policy('DELETE', '/api/user/11111111-1111-1111-1111-111111111111').allowed, false);
-  assert.equal(policy('POST', '/api/ruleChain').allowed, false);
+  assert.deepEqual(policy('POST', '/api/ruleChain'), { allowed: true, public: false });
+  assert.deepEqual(policy('POST', '/api/ruleChain/metadata'), { allowed: true, public: false });
+  assert.equal(policy('POST', '/api/ruleChains/import').allowed, false);
+  assert.equal(policy('DELETE', '/api/ruleChain/11111111-2222-4333-8444-555555555555').allowed, false);
   assert.equal(policy('POST', '/api/plugins/rpc/oneway/11111111-1111-1111-1111-111111111111').allowed, true);
   assert.deepEqual(
     policy('POST', '/api/alarm/11111111-2222-4333-8444-555555555555/ack'),
