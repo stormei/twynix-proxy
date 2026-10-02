@@ -8,7 +8,7 @@ The service is intended to run inside a trusted factory or plant network. It sho
 
 - Proxies allowlisted ThingsBoard HTTP and WebSocket routes.
 - Validates user JWTs with ThingsBoard before protected operations.
-- Enforces device/asset control permissions from `SERVER_SCOPE.security`.
+- Delegates device RPC authorization to ThingsBoard's native RPC Call permission using the caller's token. Other attribute-based guards (for example shared-attribute writes) remain unchanged.
 - Restricts ThingsBoard RPC calls by method, tag, payload shape, timeout, and rate.
 - Blocks unsafe telemetry writes while allowing controlled shared/server-scope flows.
 - Provides OPC UA gateway service routes for browse, discovery, and config apply.
@@ -31,7 +31,7 @@ TwynIX Proxy :8787
       +--> local SQLite shelving database
 ```
 
-ThingsBoard still owns normal authentication and read-side RBAC. This proxy adds stricter controls around industrial write/control paths, especially RPC and telemetry-related writes.
+ThingsBoard owns authentication, read-side RBAC, and device RPC authorization. This proxy retains payload policies, rate limits, auditing and guards for custom write paths. RPC no longer reads `SERVER_SCOPE.security.permissions.control`.
 
 ## Repository Layout
 
@@ -146,6 +146,10 @@ RPC_METHOD_PARAM_RULES={"writeTag":{"required":["tag","value"],"allowedKeys":["t
 Important production guardrails:
 
 - `RPC_ACL_ENABLED=false` is rejected when `NODE_ENV=production`.
+- `RPC_ACL_ENABLED` is retained as the legacy configuration name for the RPC transport guard, not the old attribute ACL. Keep it `true`; disabling it blocks RPC routes even in development. Both `/api/plugins/rpc/{oneway|twoway}/{deviceId}` and `/api/rpc/{oneway|twoway}/{deviceId}` require the guard.
+- Before deploying this branch against ThingsBoard 4.4, migrate existing control users into appropriately scoped ThingsBoard roles/entity groups with **RPC Call** permission. Review inherited/default roles: broad defaults may grant more access than the old ACL. Test an allowed user, a denied user, another device group, and another tenant against a non-production device.
+- Requests are forwarded with the user's token, never an administrator token. Upstream status/body are preserved, including 401/403. Pre-forward audit records say `forwarded`, not authorized; response records capture the upstream HTTP outcome, not physical equipment state. A failed response audit cannot undo a command already sent. Required pre-forward audit still fails closed.
+- RPC method/tag/parameter restrictions remain in effect (the default method is still `writeTag`). Native RPC Call permission is device-level authorization; it does not replace method restrictions, equipment interlocks or safe operating limits.
 - `AUDIT_HMAC_SECRET` or `AUDIT_HMAC_SECRET_FILE` is required when `NODE_ENV=production`.
 - `IOTDB_QUERY_ENABLED` defaults to disabled.
 - `PROXY_MAX_BODY_BYTES` limits proxied write request size and defaults to `1048576`.

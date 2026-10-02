@@ -47,7 +47,7 @@ const DEFAULT_PROXY_RULES = [
 
   { methods: ['POST', 'PUT'], rx: new RegExp(`^/api/plugins/telemetry/(ASSET|DEVICE)/${UUID_RX}/SHARED_SCOPE/?$`, 'i') },
   { methods: ['POST', 'PUT'], rx: new RegExp(`^/api/plugins/telemetry/(ASSET|DEVICE)/${UUID_RX}/SERVER_SCOPE/?$`, 'i') },
-  { methods: ['POST'], rx: new RegExp(`^/api/plugins/rpc/(oneway|twoway)/${UUID_RX}/?$`, 'i') },
+  { methods: ['POST'], rx: new RegExp(`^/api/(?:plugins/)?rpc/(oneway|twoway)/${UUID_RX}/?$`, 'i'), guard: 'native-rpc' },
 
   { methods: ['POST'], rx: /^\/api\/asset\/?$/i },
   { methods: ['PUT', 'DELETE'], rx: new RegExp(`^/api/asset/${UUID_RX}/?$`, 'i') },

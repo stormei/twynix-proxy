@@ -112,7 +112,7 @@ const config = {
   RPC_RATE_WINDOW_MS: parseInt(process.env.RPC_RATE_WINDOW_MS || '1000', 10), // 1s
   RPC_RATE_MAX: parseInt(process.env.RPC_RATE_MAX || '5', 10),               // 5 req / window
 
-  // ✅ NEW: allow quick rollback to "pure forward"
+  // Legacy flag name: transport safeguards, NOT the removed attribute ACL.
   RPC_ACL_ENABLED: String(process.env.RPC_ACL_ENABLED || 'true').toLowerCase() !== 'false',
   IOTDB_QUERY_ENABLED: String(process.env.IOTDB_QUERY_ENABLED || 'false').toLowerCase() === 'true',
   IOTDB_TREND_MAX_WINDOW_MS: parseInt(process.env.IOTDB_TREND_MAX_WINDOW_MS || String(7 * 24 * 60 * 60 * 1000), 10),
@@ -1168,16 +1168,15 @@ function checkRpcRateLimit(userId, deviceId) {
 }
 
 /* ==================================================================
-   RPC ACL middleware
-   - Guards /api/plugins/rpc/oneway/:deviceId and /api/plugins/rpc/twoway/:deviceId
-   - Uses admin token to read DEVICE SERVER_SCOPE 'security' for the DEVICE
-   - Allows if userId is in permissions.control
+   RPC transport guard (ThingsBoard 4.4 native RPC Call authorization)
+   - Guards legacy /api/plugins/rpc and current /api/rpc POST routes
+   - Forwards the authenticated caller's token; ThingsBoard authorizes the device
    - Validates JSON body before proxying and re-streams it with fixRequestBody
 ================================================================== */
 async function rpcPermissionMiddleware(req, res, next) {
   if (req.method.toUpperCase() !== 'POST') return next();
 
-  const rpcRx = /^\/api\/plugins\/rpc\/(oneway|twoway)\/([a-zA-Z0-9\-]+)\/?$/i;
+  const rpcRx = /^\/api\/(?:plugins\/)?rpc\/(oneway|twoway)\/([a-zA-Z0-9\-]+)\/?$/i;
   if (!rpcRx.test(req.path)) return next();
 
   const m = req.path.match(rpcRx);
@@ -1259,63 +1258,6 @@ async function rpcPermissionMiddleware(req, res, next) {
   req.__twynixAuth = { tenantId, userId };
 
   try {
-    const attrsArray = await fetchServerAttributesArrayCached('DEVICE', deviceId);
-    const securityAttr = getSecurityAttribute(attrsArray);
-
-    if (!securityAttr) {
-      logSecurityEvent('rpc_denied', {
-        reason: 'missing_security_attribute',
-        mode,
-        deviceId,
-        rpcMethod,
-        userId,
-        requestId: req.twynixRequestId || ''
-      });
-      await emitRpcAuditEvent(req, {
-        type: `rpc_${mode}`, outcome: 'denied', reason: 'No security attribute found',
-        userId, entityType: 'DEVICE', entityId: deviceId,
-        method: req.method, path: req.path
-      });
-      return res.status(403).send('Forbidden: No security attribute found');
-    }
-
-    let permissionsObj;
-    try {
-      permissionsObj = parseSecurityAttribute(securityAttr);
-    } catch {
-      logSecurityEvent('rpc_error', {
-        reason: 'security_attribute_parse_failed',
-        mode,
-        deviceId,
-        rpcMethod,
-        userId,
-        requestId: req.twynixRequestId || ''
-      });
-      await emitRpcAuditEvent(req, {
-        type: `rpc_${mode}`, outcome: 'error', reason: 'Failed to parse security attribute JSON',
-        userId, entityType: 'DEVICE', entityId: deviceId,
-        method: req.method, path: req.path
-      });
-      return res.status(500).send('Failed to parse security attribute JSON');
-    }
-
-    if (!hasPermission(permissionsObj, 'control', userId)) {
-      logSecurityEvent('rpc_denied', {
-        reason: 'no_control_access',
-        mode,
-        deviceId,
-        rpcMethod,
-        userId,
-        requestId: req.twynixRequestId || ''
-      });
-      await emitRpcAuditEvent(req, {
-        type: `rpc_${mode}`, outcome: 'denied', reason: 'No control access',
-        userId, entityType: 'DEVICE', entityId: deviceId,
-        method: req.method, path: req.path
-      });
-      return res.status(403).send('Forbidden: No control access');
-    }
-
     if (!checkRpcRateLimit(userId, deviceId)) {
       logSecurityEvent('rpc_denied', {
         reason: 'rate_limited',
@@ -1333,7 +1275,7 @@ async function rpcPermissionMiddleware(req, res, next) {
       return res.status(429).send('RPC rate limit exceeded');
     }
 
-    logSecurityEvent('rpc_allowed', {
+    logSecurityEvent('rpc_forwarded', {
       mode,
       deviceId,
       rpcMethod,
@@ -1342,17 +1284,22 @@ async function rpcPermissionMiddleware(req, res, next) {
     });
 
     const auditResult = await emitRpcAuditEvent(req, {
-      type: `rpc_${mode}`, outcome: 'allowed', reason: 'device_acl',
+      type: `rpc_${mode}`, outcome: 'forwarded', reason: 'pending_thingsboard_authorization',
       userId, entityType: 'DEVICE', entityId: deviceId,
       method: req.method, path: req.path
     });
     if (config.RPC_REQUIRE_AUDIT && !auditResult?.ok) return res.status(503).send('Audit log unavailable');
 
+    // Never elevate RPC to the administrative identity used for other local services.
+    req.headers['x-authorization'] = `Bearer ${userToken}`;
+    delete req.headers.authorization;
+    req.__twynixProxyGuard = 'native-rpc';
+    req.__twynixRpc = { mode, deviceId, rpcMethod };
     return next();
   } catch (e) {
     console.error('rpcPermissionMiddleware error:', e.message);
     logSecurityEvent('rpc_error', {
-      reason: 'permission_check_failed',
+      reason: 'rpc_guard_failed',
       mode,
       deviceId,
       rpcMethod,
@@ -1360,12 +1307,28 @@ async function rpcPermissionMiddleware(req, res, next) {
       requestId: req.twynixRequestId || ''
     });
     await emitRpcAuditEvent(req, {
-      type: `rpc_${mode}`, outcome: 'error', reason: 'Failed to verify permissions',
+      type: `rpc_${mode}`, outcome: 'error', reason: 'RPC transport guard failed',
       userId, entityType: 'DEVICE', entityId: deviceId,
       method: req.method, path: req.path
     });
-    return res.status(500).send('Failed to verify RPC permissions');
+    return res.status(500).send('RPC transport guard failed');
   }
+}
+
+// An HTTP response is not confirmation that equipment reached the requested state.
+function auditRpcResponse(req, statusCode, transportError = false) {
+  if (!req.__twynixRpc) return;
+  const { mode, deviceId } = req.__twynixRpc;
+  const outcome = transportError ? 'error' : [401, 403].includes(statusCode) ? 'denied'
+    : statusCode >= 200 && statusCode < 300 ? 'response_received' : 'error';
+  void emitAuditEvent(req, {
+    type: `rpc_${mode}_response`, outcome,
+    reason: transportError ? 'upstream_transport_error_delivery_uncertain' : `thingsboard_http_${statusCode}`,
+    entityType: 'DEVICE', entityId: deviceId, method: req.method, path: req.path
+  }).catch(error => {
+    serviceState.lastAuditError = error?.message || String(error);
+    console.error('[RPC] Response audit failed:', serviceState.lastAuditError);
+  });
 }
 
 /* -----------------------------------------------------------------
@@ -1894,10 +1857,12 @@ const tbProxy = createProxyMiddleware({
     proxyRes: (proxyRes, req) => {
       // Helpful to debug 504 vs TB timeout
       console.log(`← TB ${req.method} ${req.url} -> ${proxyRes.statusCode}`);
+      auditRpcResponse(req, proxyRes.statusCode);
     },
     error: (err, req, res) => {
       console.error('Proxy error:', err.message);
       serviceState.lastThingsBoardError = err.message || String(err);
+      auditRpcResponse(req, 502, true);
       if (!res.headersSent) res.status(502).send('Bad Gateway');
     }
   }
@@ -1936,14 +1901,16 @@ const tbWsProxy = createProxyMiddleware({
 app.use(permissionCheckMiddleware);
 
 /* -------------------------------------------
-   RPC ACL is NOT registered unless enabled
+   RPC transport guard; disabled guards cannot satisfy the route allowlist
 -------------------------------------------- */
 if (config.RPC_ACL_ENABLED) {
-  console.log('[RPC] ACL middleware ENABLED');
-  app.use('/api/plugins/rpc', express.json({ limit: config.RPC_JSON_LIMIT }));
-  app.use(rpcPermissionMiddleware);
+  console.log('[RPC] Transport guard ENABLED; device authorization delegated to ThingsBoard');
+  app.use(['/api/plugins/rpc', '/api/rpc'], express.json({ limit: config.RPC_JSON_LIMIT }));
+  app.use((req, res, next) => {
+    Promise.resolve(rpcPermissionMiddleware(req, res, next)).catch(next);
+  });
 } else {
-  console.log('[RPC] ACL middleware DISABLED (pure forward)');
+  console.log('[RPC] Transport guard DISABLED; RPC routes will be blocked');
 }
 
 app.use(createAlarmAckGuard({
