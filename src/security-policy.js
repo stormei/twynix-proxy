@@ -60,6 +60,7 @@ const DEFAULT_PROXY_RULES = [
 ];
 
 const LOCAL_PATH_PREFIXES = [
+  '/api/factory/machines/',
   '/telemetry',
   '/query',
   '/health',

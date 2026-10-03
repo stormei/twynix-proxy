@@ -14,6 +14,9 @@ const helmet = require('helmet'); // ← MUST-DO: security headers
 const { createTwynixOplogRouter, createOplogEmitter } = require('./src/twynix-oplog');
 const { createCameraAssetsRouter } = require('./src/camera-assets');
 const { createAlarmAckGuard } = require('./src/alarm-ack-guard');
+const { createDowntimeRouter } = require('./src/factory-downtime');
+const { containsFactoryJournal } = require('./src/factory-attribute-policy');
+const { createNotesRouter } = require('./src/factory-notes');
 const { createTelemetryWriteGuard } = require('./src/telemetry-write-policy');
 const { createTrendQueryHandler } = require('./src/iotdb-trend-query');
 const { createIotdbSchemaHandler } = require('./src/iotdb-schema');
@@ -1334,6 +1337,15 @@ function auditRpcResponse(req, statusCode, transportError = false) {
 /* -----------------------------------------------------------------
    Management write allowlist (incl. SERVER_SCOPE for admins)
 ------------------------------------------------------------------ */
+// Keep audited downtime records behind their dedicated append-only endpoint.
+app.use('/api/plugins/telemetry', (req,res,next) => {
+  if (!/^(POST|PUT)$/i.test(req.method) || !/\/SERVER_SCOPE\/?$/i.test(req.path)) return next();
+  express.json({limit:config.PROXY_MAX_BODY_BYTES || '256kb'})(req,res,(err) => {
+    if(err)return next(err);
+    if (req.body && containsFactoryJournal(req.body)) return res.status(403).json({error:'Use the audited Factory operations endpoint.'});
+    next();
+  });
+});
 const UUID_RX = '[0-9a-fA-F-]{36}';
 const MGMT_POLICIES = [
   ...TWIN_CONFIGURATION_RULES,
@@ -1504,6 +1516,9 @@ async function requireValidUser(req, res) {
   req.__twynixAuth = { tenantId, userId };
   return { userToken, userId, tenantId };
 }
+
+app.use(createDowntimeRouter({express,ax,base:config.THINGSBOARD_URL,requireValidUser}));
+app.use(createNotesRouter({express,ax,base:config.THINGSBOARD_URL,requireValidUser}));
 
 app.use(createTwynixOplogRouter({
   config,

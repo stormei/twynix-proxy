@@ -322,3 +322,15 @@ Also complete:
 ## License
 
 This project is licensed under the Apache License 2.0. See `LICENSE`.
+
+### Factory downtime review (POC)
+
+`GET /api/factory/machines/:machineId/downtime`, `POST .../:periodId/prepare` and `POST .../:periodId/reason` provide tenant-admin-only preparation and reason writes, using the caller's ThingsBoard token. The fixed TBEL spec generates scheduled non-RUNNING intervals and verifies them against an existing finalized `availabilityDailyReport`; no telemetry or rule chain is edited. The MACHINE's separate `downtimeReview` SERVER_SCOPE journal stores progress, frozen days and append-only reason revisions with server-derived user/time. Generic SERVER_SCOPE writes to this reserved attribute are denied.
+
+Deploy **one proxy process/replica** for this POC: the per-machine lock prevents concurrent journal writes only in one process. Multi-process atomicity, archival, tamper-proof compliance retention and broader operator permissions remain separate gates. The journal rejects more than 62 days, 2000 events per day or 180000 serialized bytes without evicting history. Direct privileged ThingsBoard administration can bypass proxy policy; configure administrative access and native audit retention separately.
+
+Reason payload: `{eventId, expectedRevision, reasonId, note, requestId}`. Reasons: `MAINTENANCE`, `MATERIAL`, `SETUP`, `BREAKDOWN`, `OTHER`, or null to clear. Notes are limited to 500 characters; requestId is a UUID for idempotent retry. Caller-supplied user/time or event boundaries are refused. Changed report fingerprints or stale event revisions return 409. A successful response includes readback-verified journal data; readiness does not imply complete source coverage. Ordinary ThingsBoard-authorized attribute reads remain available to read-only viewers.
+
+### Factory machine notes and handover
+
+`GET/POST /api/factory/machines/:machineId/notes` store an append-only SERVER_SCOPE machineNotes journal through the caller token. Tenant administrators write; authorized viewers read. Trusted author/time, expected revision, idempotent request ID and readback are required. Generic SERVER_SCOPE replacement of machineNotes/downtimeReview is denied. Limits fail without eviction (200 notes, 400 operations, 180000 bytes). Per-machine locks support a single proxy process; multi-replica atomicity and archival are not established. No industrial calculation or additional database is introduced.
