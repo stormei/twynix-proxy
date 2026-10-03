@@ -27,6 +27,8 @@ const DEFAULT_PROXY_RULES = [
   // Authenticated ThingsBoard alarm search. Keep this deliberately exact:
   // nearby alarmsQuery endpoints and other POST /api/** routes stay denied.
   { methods: ['POST'], rx: /^\/api\/alarmsQuery\/find$/ },
+  // Read-only entity search; authenticate the caller and retain native TB access checks.
+  { methods: ['POST'], rx: /^\/api\/entitiesQuery\/find$/ },
   { methods: ['GET', 'HEAD'], rx: /^\/api\/tenant\/(devices|deviceInfos|assets|assetInfos|alarms|dashboards|dashboardInfos)\/?$/i },
   { methods: ['GET', 'HEAD'], rx: new RegExp(`^/api/customer/${UUID_RX}/(devices|deviceInfos|assets|assetInfos|alarms|dashboards|dashboardInfos)/?$`, 'i') },
   { methods: ['GET', 'HEAD'], rx: /^\/api\/(device|asset)\/types\/?$/i },
