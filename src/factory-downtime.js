@@ -1,6 +1,7 @@
 "use strict";
 const { createHash, randomUUID } = require("node:crypto");
 const spec = require("./factory-downtime-spec.json");
+const { decodeJournal, encodeJournal } = require("./downtime-journal-storage");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const REASONS = ["MAINTENANCE", "MATERIAL", "SETUP", "BREAKDOWN", "OTHER"];
@@ -128,7 +129,7 @@ function createDowntimeRouter({ express, ax, base, requireValidUser }) {
     const journal =
       value == null
         ? { schemaVersion: 1, revision: 0, periods: [] }
-        : decode(value);
+        : decodeJournal(value);
     if (
       journal.schemaVersion !== 1 ||
       !Number.isInteger(journal.revision) ||
@@ -139,12 +140,8 @@ function createDowntimeRouter({ express, ax, base, requireValidUser }) {
   }
   async function save(c, j) {
     j.revision++;
-    if (Buffer.byteLength(JSON.stringify(j)) > 180000)
-      fail(
-        "Downtime review storage is full. Archive it before adding more records.",
-        409,
-      );
-    await c.post(c.path + "/SERVER_SCOPE", { downtimeReview: j });
+    const stored = encodeJournal(j);
+    await c.post(c.path + "/SERVER_SCOPE", { downtimeReview: stored });
     if (hash(await load(c)) !== hash(j))
       fail("Save could not be confirmed. Refresh before retrying.", 409);
   }

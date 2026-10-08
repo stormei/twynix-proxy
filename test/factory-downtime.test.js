@@ -119,9 +119,9 @@ test("Boundary validation rejects overlap, unknown states and mismatched totals"
 });
 async function harness(
   t,
-  { auth = true, authority = "TENANT_ADMIN", block = false } = {},
+  { auth = true, authority = "TENANT_ADMIN", block = false, initialJournal } = {},
 ) {
-  let journal = { schemaVersion: 1, revision: 0, periods: [period()] };
+  let journal = initialJournal || { schemaVersion: 1, revision: 0, periods: [period()] };
   let posts = 0;
   let release;
   const gate = new Promise((r) => (release = r));
@@ -211,4 +211,60 @@ test("Concurrent conflicts cannot release another operation lock", async (t) => 
   h.release();
   assert.equal((await first).status, 200);
   assert.equal(h.posts(), 1);
+});
+
+ test("Large legacy journal migrates on a reason append, and readback preserves every record", async t => {
+ const p=period();
+ p.events.push(...Array.from({length:1700},(_,i)=>({...event,id:String(i).padStart(64,"0"),start:2000+i*2000,end:3000+i*2000})));
+ const initialJournal={schemaVersion:1,revision:4,periods:[p]};
+ assert.ok(Buffer.byteLength(JSON.stringify(initialJournal)) > 180000);
+ const h=await harness(t,{initialJournal});
+ const response=await h.save(input);
+ assert.equal(response.status,200);
+ const decoded=await response.json();
+ assert.equal(decoded.periods[0].events.length,1701);
+ assert.equal(decoded.periods[0].history.length,1);
+ assert.equal(h.journal().encoding,"gzip-base64");
+ assert.equal((await h.save(input)).status,200);
+ assert.equal(h.posts(),1);
+ const loaded=await (await fetch(h.path)).json();
+ assert.deepEqual(loaded,decoded);
+ });
+ test("Expanded storage guard retains the existing journal and makes no native write",async t=>{
+ const initialJournal={schemaVersion:1,revision:4,periods:[period()],extra:"x".repeat(2*1024*1024)};
+ const h=await harness(t,{initialJournal});
+ assert.equal((await h.save(input)).status,409);
+ assert.equal(h.posts(),0);
+ assert.deepEqual(h.journal(),initialJournal);
+ });
+
+test('Preparation can finish a new day beside a large saved journal and retries without duplicating stops',async t=>{
+ const old=period();old.periodId='2026-09-29';
+ old.events.push(...Array.from({length:1700},(_,i)=>({...event,id:String(i).padStart(64,'0'),start:2000+i*2000,end:3000+i*2000})));
+ let stored={schemaVersion:1,revision:5,periods:[old]};const original=structuredClone(old);let saves=0;let calculations=0;
+ const calendar={schemaVersion:1,revisions:[{id:'r1',effectiveFrom:'2026-01-01',timezone:'UTC',shifts:[],exceptions:[]}]};
+ const ax={get:async url=>{
+  if(url.endsWith('/api/auth/user'))return {data:user};
+  if(url.includes('/api/assets?'))return {data:[{type:'MACHINE'}]};
+  if(url.includes('availabilityDailyReport'))return {data:{availabilityDailyReport:[{ts:1999,value:report}]}};
+  if(url.includes('keys=productionCalendar'))return {data:[{key:'productionCalendar',value:calendar}]};
+  if(url.includes('keys=machineState'))return {data:{machineState:[]}};
+  return {data:[{key:'downtimeReview',value:structuredClone(stored)}]};
+ },post:async(url,body)=>{
+  if(url.endsWith('/api/calculatedField/testScript')){
+   calculations++;
+   const result=calculations%2===1 ? {msgType:'FACTORY_AVAILABILITY_QUERY',msg:{periodId:report.periodId,periodStart:0,periodEnd:2000,plannedMs:900},metadata:{fromTs:'0',toTs:'2000'}} : {msg:{values:{availabilityDailyCheckpoint:{},availabilityDailyReport:{...report,downtimeEvents:[{start:100,end:1000,state:'STOPPED'}]}}}};
+   return {data:{output:JSON.stringify(result)}};
+  }
+  saves++;stored=structuredClone(body.downtimeReview);return {data:null};
+ }};
+ const app=express();app.use(createDowntimeRouter({express,ax,base:'http://tb',requireValidUser:async()=>({userToken:'test'})}));
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>server.close());
+ const path=`http://127.0.0.1:${server.address().port}/api/factory/machines/${uuid}/downtime/2026-09-30/prepare`;
+ const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+ assert.equal(response.status,200);const result=await response.json();
+ assert.equal(stored.encoding,'gzip-base64');assert.deepEqual(result.periods[0],original);
+ assert.equal(result.periods[1].status,'READY');assert.equal(result.periods[1].events.length,1);
+ assert.equal((await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,200);
+ assert.equal(saves,1);assert.equal(calculations,2);
 });

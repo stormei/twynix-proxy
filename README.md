@@ -334,3 +334,19 @@ Reason payload: `{eventId, expectedRevision, reasonId, note, requestId}`. Reason
 ### Factory machine notes and handover
 
 `GET/POST /api/factory/machines/:machineId/notes` store an append-only SERVER_SCOPE machineNotes journal through the caller token. Tenant administrators write; authorized viewers read. Trusted author/time, expected revision, idempotent request ID and readback are required. Generic SERVER_SCOPE replacement of machineNotes/downtimeReview is denied. Limits fail without eviction (200 notes, 400 operations, 180000 bytes). Per-machine locks support a single proxy process; multi-replica atomicity and archival are not established. No industrial calculation or additional database is introduced.
+
+### Downtime review storage encoding
+
+Downtime journals above 180,000 JSON bytes migrate on a confirmed journal write to
+`{schemaVersion:2, encoding:"gzip-base64", data:"..."}` in the same protected MACHINE
+SERVER_SCOPE attribute. This lossless envelope contains the unchanged schema-v1 journal,
+including processing checkpoints, frozen intervals and all audit revisions. Small legacy
+journals remain plain JSON. The dedicated API returns expanded schema-v1 data, and readback
+compares decoded data. Maximum stored envelope: 180,000 UTF-8 bytes; maximum expanded
+journal: 2 MiB. Existing 62-day and 2,000-event-per-day guards remain. Failures never evict
+evidence. The limit remains a POC capacity boundary, not archival/retention.
+
+Deploy the matching Factory frontend (bounded gzip decoding for caller-authorized direct
+attribute reads) before using this backend encoding. Do not roll back to a proxy/frontend
+that cannot decode schema-v2 envelopes after any journal migrates. No automatic destructive
+rollback or deletion is provided. No new database, permissions or calculation is introduced.
