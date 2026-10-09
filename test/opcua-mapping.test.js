@@ -7,6 +7,18 @@ const { compileMappings } = require('../src/opcua-engineering/mapping-compiler')
 const { MappingService } = require('../src/opcua-engineering/mapping-service');
 const user = { tenantId: randomUUID(), userId: randomUUID(), authority: 'TENANT_ADMIN' };
 const deviceId = randomUUID();
+test('device search uses the ThingsBoard 4.4 current-user endpoint with bounded paging', async () => {
+  const calls = [];
+  const service = new MappingService({ request: async (...args) => {
+    calls.push(args);
+    return { data: [{ id: { id: deviceId }, name: 'Test motor', type: 'default' }], hasNext: true };
+  } });
+  const result = await service.devices(user, 'Motor & pump', 2);
+  assert.deepEqual(calls[0], [user, 'GET', '/api/deviceInfos/all?pageSize=50&page=2&includeCustomers=true&textSearch=Motor%20%26%20pump&sortProperty=name&sortOrder=ASC']);
+  assert.deepEqual(result, { data: [{ id: deviceId, name: 'Test motor', type: 'default' }], hasNext: true });
+  await assert.rejects(service.devices(user, '', -1), { status: 400 });
+  assert.equal(calls.length, 1);
+});
 function signal(overrides = {}) { return { id: randomUUID(), nodeId: 'ns=2;s=Device.tag1', parentNodeId: 'ns=2;s=Device', namespaceUri: 'urn:test', browseName: '2:tag1', displayName: 'tag1', dataType: 'UInt16', deviceId, key: 'speed', enabled: true, ...overrides }; }
 function setup(t, enabled = true) {
   const store = openMappingStore(':memory:'); t.after(() => store.close());

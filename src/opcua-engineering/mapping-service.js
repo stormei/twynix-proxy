@@ -21,7 +21,7 @@ class MappingService {
   }
   async devices(user, search = '', page = 0) {
     if (typeof search !== 'string' || search.length > 100 || !Number.isSafeInteger(page) || page < 0 || page > 10000) fail(400, 'Invalid device search');
-    const result = await this.request(user, 'GET', `/api/tenant/deviceInfos?pageSize=50&page=${page}&textSearch=${encodeURIComponent(search)}&sortProperty=name&sortOrder=ASC`);
+    const result = await this.request(user, 'GET', `/api/deviceInfos/all?pageSize=50&page=${page}&includeCustomers=true&textSearch=${encodeURIComponent(search)}&sortProperty=name&sortOrder=ASC`);
     return { data: result.data.map(d => ({ id: d.id.id, name: d.name, type: d.type })), hasNext: result.hasNext };
   }
   get(user, id) {
