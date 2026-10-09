@@ -83,6 +83,32 @@ The service listens on port `8787` by default.
 
 ## Configuration
 
+### SQLite screens (opt-in)
+
+Set `SCREEN_STORAGE_ENABLED=true` and `SCREEN_DB_PATH=/app/data/screens.sqlite`
+to enable `/api/twynix/screens`. The existing `/app/data` Docker volume must be
+persistent local storage. Use a single proxy instance. The frontend must opt in
+with public configuration `screenStorage: "sqlite"` after this proxy is deployed.
+
+Identity is checked against ThingsBoard on each request. Tenant admins author;
+same-tenant authenticated users read new published screens only. Migrated screen
+viewers retain a caller-token check against the source asset. Migration never
+deletes or overwrites source assets. Do not remove source assets until a separate
+permission-transition plan is approved. Disabling the feature does not copy local
+changes back to ThingsBoard.
+
+Updates require `If-Match` revisions; stale changes return 409. Published content
+is frozen; create a maintenance copy. Deletions retain records and revision
+history. Revision retention is currently unbounded: monitor database size.
+Snapshots export/import screen records only, not external media/templates.
+Import always creates a new draft. They are NOT self-contained release packages.
+
+Back up with `node tools/backup-screens.js /app/data/backups/<unique-name>.sqlite`.
+It uses SQLite online backup and integrity validation; copy results off-host.
+Restore only with the proxy stopped, into a clean location without old WAL/SHM
+sidecars; preserve the old database and use compatible proxy schema versions.
+No automated backup schedule or production migration is performed by this change.
+
 ### Twin configuration and Rule Chain provisioning routes
 
 Twin deployment and Factory availability provisioning permit these exact authenticated POST routes:

@@ -20,6 +20,8 @@ const { createNotesRouter } = require('./src/factory-notes');
 const { createTelemetryWriteGuard } = require('./src/telemetry-write-policy');
 const { createTrendQueryHandler } = require('./src/iotdb-trend-query');
 const { createIotdbSchemaHandler } = require('./src/iotdb-schema');
+const { openScreenStore } = require('./src/screen-store');
+const { createScreenRouter } = require('./src/screen-router');
 const { readEnvSecret } = require('./src/config-secrets');
 const { validateConfig } = require('./src/config-validation');
 const { validateProxyBodySize } = require('./src/request-size-policy');
@@ -1519,6 +1521,35 @@ async function requireValidUser(req, res) {
 
 app.use(createDowntimeRouter({express,ax,base:config.THINGSBOARD_URL,requireValidUser}));
 app.use(createNotesRouter({express,ax,base:config.THINGSBOARD_URL,requireValidUser}));
+
+// Opt-in until copy/verification and recovery acceptance are complete.
+if (process.env.SCREEN_STORAGE_ENABLED === 'true') {
+  const screenDbPath = process.env.SCREEN_DB_PATH || '/app/data/screens.sqlite';
+  if (path.resolve(screenDbPath) === path.resolve(config.SHELVING_DB_PATH)) throw new Error('Screens require a dedicated database, separate from alarm shelving');
+  const screenStore = openScreenStore(screenDbPath);
+  app.use('/api/twynix/screens', createScreenRouter({
+    store: screenStore,
+    authenticate: async req => {
+      const userToken = getBearerTokenFromHeaders(req.headers);
+      if (!userToken) throw Object.assign(new Error('Authentication required'), { status: 401 });
+      // Fresh server identity, not unverified client-supplied tenant/role fields.
+      const { data: user } = await ax.get(`${config.THINGSBOARD_URL}/api/auth/user`, {
+        headers: { 'X-Authorization': `Bearer ${userToken}` }
+      });
+      return { userToken, userId: user.id?.id, tenantId: user.tenantId?.id, authority: user.authority };
+    },
+    readLegacy: async (user, id, checkOnly = false) => {
+      const headers = { 'X-Authorization': `Bearer ${user.userToken}` };
+      const [info, details] = await Promise.all([
+        ax.get(`${config.THINGSBOARD_URL}/api/asset/info/${id}`, { headers }),
+        ax.get(`${config.THINGSBOARD_URL}/api/plugins/telemetry/ASSET/${id}/values/attributes/SERVER_SCOPE${checkOnly ? '?keys=screenLifecycle' : ''}`, { headers })
+      ]);
+      return { asset: info.data, attrs: Object.fromEntries(details.data.map(attr => [attr.key, attr.value])) };
+    }
+  }));
+} else {
+  app.use('/api/twynix/screens', (req, res) => res.status(503).json({ message: 'SQLite screen storage is not enabled on this proxy' }));
+}
 
 app.use(createTwynixOplogRouter({
   config,
