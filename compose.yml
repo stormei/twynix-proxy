@@ -15,7 +15,8 @@ services:
       - /secure/secrets/iotdb_auth:/run/secrets/iotdb_auth:ro
       - /secure/secrets/internal_proxy_secret:/run/secrets/internal_proxy_secret:ro
       - /secure/secrets/audit_hmac_secret:/run/secrets/audit_hmac_secret:ro
-
+      - ./opcua-connections.json:/run/config/opcua-connections.json:ro
+      
     cap_drop:
       - ALL
 
