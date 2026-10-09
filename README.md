@@ -387,3 +387,64 @@ this proxy. Tenant admins can create, update, delete and explicitly copy legacy
 New templates are tenant-readable. Migrated templates retain source-asset access
 checks for non-admins. Mutations require revision checks; deletion retains history.
 This does not change operational ThingsBoard assets or RPC permissions.
+
+## OPC UA mapping workspace
+
+The matching Twynix frontend supports browse, device/key mapping, saved drafts,
+live validation, reviewed deployment, and latest-telemetry verification. ThingsBoard
+owns subscriptions; this proxy never writes OPC UA values or runs acquisition.
+
+Keep the approved connection registry and its read-only Docker mount. With
+`OPCUA_DISCOVERY_ENABLED=true`, mapping drafts and history use a **separate** SQLite
+database at `/app/data/opcua-engineering/mappings.sqlite`. Override that path with
+`OPCUA_MAPPING_DB_PATH`. The existing `/app/data` persistent volume covers it.
+Run one proxy process/replica against this database.
+
+Deployment requires the additional opt-in `OPCUA_DEPLOYMENT_ENABLED=true`. It uses
+the freshly authenticated caller's ThingsBoard permissions, not the proxy's admin
+credentials. Tenant administrators only are supported in this release. The first
+approved deployment creates an isolated Integration and uplink converter. Later
+deployments create a new converter version and switch only the owned Integration;
+previous converters are retained. Automatic device/asset creation and downlink are
+disabled. Existing integrations and telemetry history are not deleted. Disabling
+all mappings disables the managed Integration. Restoring a draft revision never
+changes the running configuration until explicitly deployed.
+
+Preview tokens expire after five minutes and are single-use. Save conflicts,
+resource-version conflicts, changed namespace identities, ambiguous paths and
+unsupported types fail closed. A partial or uncertain remote save is recorded as
+`attention` and blocks further deployment for that connection. Inspect the recorded
+resource IDs and ThingsBoard audit trail before recovery; there is deliberately no
+blind retry or automatic rollback. Operator reconciliation UI is not yet provided.
+
+Current scope: 100 mapped signals per connection, scalar Boolean/String/safe
+numeric types, existing tenant devices, explicitly approved None/Anonymous OPC UA,
+and bounded source subtrees (300 nodes per mapped parent, no runtime-truncated
+browse pages). Secure OPC UA provisioning, large-site qualification, richer AAS
+measurement metadata and automatic recovery remain separate work. Subscription
+timing is ThingsBoard-controlled (4.4 requests 1 second). Fresh telemetry timestamps
+confirm receipt, not source provenance or signal-health policy. No production-scale
+or 20-signal live acceptance claim is made by the automated tests.
+
+### Back up and restore OPC UA mappings
+
+Mount a separate backup destination into the container, for example `/backups`.
+Run and schedule on the Docker host:
+
+```sh
+docker exec twynix-proxy node tools/backup-opcua-mappings.js /backups
+```
+
+This uses SQLite online backup and verifies integrity. Copy backups off the proxy
+host; a backup on the same disk is not disaster recovery. Scheduling and off-host
+copy are operator responsibilities, not automatically installed by the application.
+Back up the approved connection registry separately. Device credentials and user
+tokens are not stored in the mapping database.
+
+For restore, stop the proxy, preserve the entire current engineering database
+directory (including WAL/SHM files), and put a verified backup in a fresh directory
+at the configured database path. Restore the matching connection registry and
+ownership permissions before restarting. Never overlay an old main SQLite file
+onto live WAL files. Test this procedure on a separate volume before relying on it.
+Restoring SQLite does not roll back ThingsBoard configuration; the deployment
+fingerprint checks intentionally stop overwriting a different remote state.

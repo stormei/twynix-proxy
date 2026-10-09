@@ -1,7 +1,7 @@
 const express = require('express');
-function createDiscoveryRouter({ sessions, authenticate, audit = () => {} }) {
+function createDiscoveryRouter({ sessions, mappings, authenticate, audit = () => {} }) {
   const router = express.Router();
-  router.use(express.json({ limit: '16kb' }));
+  router.use(express.json({ limit: '256kb' }));
   router.use(async (req, res, next) => {
     try {
       req.discoveryUser = await authenticate(req);
@@ -22,6 +22,15 @@ function createDiscoveryRouter({ sessions, authenticate, audit = () => {} }) {
     }
   };
   router.get('/connections', route('connections', req => sessions.list(req.discoveryUser)));
+  if (mappings) {
+    router.get('/devices', route('devices', req => mappings.devices(req.discoveryUser, req.query.search || '', Number(req.query.page || 0))));
+    router.get('/mappings/:connection', route('read-mapping', req => mappings.get(req.discoveryUser, req.params.connection)));
+    router.put('/mappings/:connection', route('save-mapping', req => mappings.save(req.discoveryUser, req.params.connection, req.body || {})));
+    router.post('/mappings/:connection/restore', route('restore-mapping', req => mappings.restore(req.discoveryUser, req.params.connection, req.body || {})));
+    router.post('/mappings/:connection/preview', route('preview-mapping', req => mappings.preview(req.discoveryUser, req.params.connection, req.body?.sessionId)));
+    router.post('/mappings/:connection/deploy', route('deploy-mapping', req => mappings.deploy(req.discoveryUser, req.params.connection, req.body?.token)));
+    router.get('/mappings/:connection/verify', route('verify-mapping', req => mappings.verify(req.discoveryUser, req.params.connection)));
+  }
   router.post('/sessions', route('open', req => sessions.open(req.discoveryUser, req.body?.connectionId, req.body?.revision)));
   router.post('/sessions/:id/browse', route('browse', req => sessions.browse(req.discoveryUser, req.params.id, req.body || {})));
   router.post('/sessions/:id/inspect', route('inspect', req => sessions.inspect(req.discoveryUser, req.params.id, req.body || {})));

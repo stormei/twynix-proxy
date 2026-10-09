@@ -1528,14 +1528,27 @@ if (process.env.OPCUA_DISCOVERY_ENABLED === 'true') {
   if (!process.env.OPCUA_CONNECTIONS_FILE) throw new Error('OPCUA_CONNECTIONS_FILE is required');
   const connections = parseConnections(require('node:fs').readFileSync(process.env.OPCUA_CONNECTIONS_FILE, 'utf8'));
   const sessions = new DiscoverySessions({ connections, createClient: createReadOnlyClient });
-  app.use('/api/twynix/engineering/opcua', createDiscoveryRouter({ sessions,
+  const { openMappingStore } = require('./src/opcua-engineering/mapping-store');
+  const { MappingService } = require('./src/opcua-engineering/mapping-service');
+  const mappingDbPath = process.env.OPCUA_MAPPING_DB_PATH || '/app/data/opcua-engineering/mappings.sqlite';
+  if ([process.env.SCREEN_DB_PATH || '/app/data/screens.sqlite', config.SHELVING_DB_PATH].filter(Boolean).some(p => path.resolve(p) === path.resolve(mappingDbPath))) throw new Error('OPC UA mappings require a dedicated database');
+  const mappingStore = openMappingStore(mappingDbPath);
+  const mappings = new MappingService({ store: mappingStore, sessions, deploymentEnabled: process.env.OPCUA_DEPLOYMENT_ENABLED === 'true',
+    request: async (user, method, resource, body) => {
+      const response = await ax.request({ method, url: `${config.THINGSBOARD_URL}${resource}`, data: body,
+        headers: { 'X-Authorization': `Bearer ${user.userToken}` }, timeout: 15000, maxRedirects: 0,
+        maxContentLength: 2097152, maxBodyLength: 2097152 });
+      return response.data;
+    }
+  });
+  app.use('/api/twynix/engineering/opcua', createDiscoveryRouter({ sessions, mappings,
     authenticate: async req => {
       const token = getBearerTokenFromHeaders(req.headers);
       if (!token) throw Object.assign(new Error('Authentication required'), { status: 401 });
       const { data: user } = await ax.get(`${config.THINGSBOARD_URL}/api/auth/user`, {
         headers: { 'X-Authorization': `Bearer ${token}` }, timeout: 5000, maxRedirects: 0
       });
-      return { userId: user.id?.id, tenantId: user.tenantId?.id, authority: user.authority };
+      return { userId: user.id?.id, tenantId: user.tenantId?.id, authority: user.authority, userToken: token };
     },
     audit: event => console.info(JSON.stringify({ feature: 'opcua-discovery', ...event }))
   }));

@@ -63,7 +63,7 @@ function createReadOnlyClient(connection) {
     },
     async inspect(nodeIds) {
       active();
-      const attributes = ['NodeClass', 'DataType', 'ValueRank', 'UserAccessLevel', 'Value', 'Description'];
+      const attributes = ['NodeClass', 'DataType', 'ValueRank', 'UserAccessLevel', 'Value', 'Description', 'BrowseName'];
       const values = await session.read(nodeIds.flatMap(nodeId => attributes.map(key => ({ nodeId, attributeId: AttributeIds[key] }))));
       return nodeIds.map((nodeId, index) => ({ nodeId, attributes: Object.fromEntries(attributes.map((key, offset) => {
         const data = values[index * attributes.length + offset];
@@ -71,6 +71,7 @@ function createReadOnlyClient(connection) {
         if (key === 'NodeClass') value = NodeClass[value] || value;
         if (key === 'DataType' && value) value = value.namespace === 0 ? (DataType[value.value] || value.toString()) : value.toString();
         if (key === 'Description') value = value?.text || null;
+        if (key === 'BrowseName') value = value?.name || null;
         if (key === 'UserAccessLevel' && typeof value === 'number') value = { read: !!(value & 1), write: !!(value & 2) };
         return [key, { status: data.statusCode.toString(), value: data.statusCode.isGood() ? preview(value) : null,
           sourceTimestamp: data.sourceTimestamp?.toISOString() || null, serverTimestamp: data.serverTimestamp?.toISOString() || null }];
