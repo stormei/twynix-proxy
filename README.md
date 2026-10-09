@@ -376,3 +376,14 @@ Deploy the matching Factory frontend (bounded gzip decoding for caller-authorize
 attribute reads) before using this backend encoding. Do not roll back to a proxy/frontend
 that cannot decode schema-v2 envelopes after any journal migrates. No automatic destructive
 rollback or deletion is provided. No new database, permissions or calculation is introduced.
+# Faceplate template SQLite storage
+
+With `SCREEN_STORAGE_ENABLED=true`, `/api/twynix/faceplate-templates` stores
+presentation templates in separate tables in the same `SCREEN_DB_PATH` database.
+The existing online screen backup includes both kinds of documents. Enable
+`faceplateStorage: "sqlite"` in Twynix frontend runtime configuration after deploying
+this proxy. Tenant admins can create, update, delete and explicitly copy legacy
+`$FACEPLATE_TEMPLATE` assets; IDs are preserved and originals are retained.
+New templates are tenant-readable. Migrated templates retain source-asset access
+checks for non-admins. Mutations require revision checks; deletion retains history.
+This does not change operational ThingsBoard assets or RPC permissions.

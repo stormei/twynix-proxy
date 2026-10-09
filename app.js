@@ -1519,6 +1519,35 @@ async function requireValidUser(req, res) {
   return { userToken, userId, tenantId };
 }
 
+// Independent discovery only; does not use gateway RPC or admin-token elevation.
+if (process.env.OPCUA_DISCOVERY_ENABLED === 'true') {
+  const { parseConnections } = require('./src/opcua-engineering/connection-policy');
+  const { DiscoverySessions } = require('./src/opcua-engineering/session-manager');
+  const { createReadOnlyClient } = require('./src/opcua-engineering/node-opcua-client');
+  const { createDiscoveryRouter } = require('./src/opcua-engineering/router');
+  if (!process.env.OPCUA_CONNECTIONS_FILE) throw new Error('OPCUA_CONNECTIONS_FILE is required');
+  const connections = parseConnections(require('node:fs').readFileSync(process.env.OPCUA_CONNECTIONS_FILE, 'utf8'));
+  const sessions = new DiscoverySessions({ connections, createClient: createReadOnlyClient });
+  app.use('/api/twynix/engineering/opcua', createDiscoveryRouter({ sessions,
+    authenticate: async req => {
+      const token = getBearerTokenFromHeaders(req.headers);
+      if (!token) throw Object.assign(new Error('Authentication required'), { status: 401 });
+      const { data: user } = await ax.get(`${config.THINGSBOARD_URL}/api/auth/user`, {
+        headers: { 'X-Authorization': `Bearer ${token}` }, timeout: 5000, maxRedirects: 0
+      });
+      return { userId: user.id?.id, tenantId: user.tenantId?.id, authority: user.authority };
+    },
+    audit: event => console.info(JSON.stringify({ feature: 'opcua-discovery', ...event }))
+  }));
+  // Cleanup precedes termination; no background reconnect or acquisition worker.
+  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => {
+    const deadline = setTimeout(() => process.exit(0), 10000);
+    sessions.shutdown().finally(() => { clearTimeout(deadline); process.exit(0); });
+  });
+} else {
+  app.use('/api/twynix/engineering/opcua', (req, res) => res.status(503).json({ message: 'OPC UA discovery is not enabled on this proxy' }));
+}
+
 app.use(createDowntimeRouter({express,ax,base:config.THINGSBOARD_URL,requireValidUser}));
 app.use(createNotesRouter({express,ax,base:config.THINGSBOARD_URL,requireValidUser}));
 
@@ -1527,8 +1556,7 @@ if (process.env.SCREEN_STORAGE_ENABLED === 'true') {
   const screenDbPath = process.env.SCREEN_DB_PATH || '/app/data/screens.sqlite';
   if (path.resolve(screenDbPath) === path.resolve(config.SHELVING_DB_PATH)) throw new Error('Screens require a dedicated database, separate from alarm shelving');
   const screenStore = openScreenStore(screenDbPath);
-  app.use('/api/twynix/screens', createScreenRouter({
-    store: screenStore,
+  const documentAccess = {
     authenticate: async req => {
       const userToken = getBearerTokenFromHeaders(req.headers);
       if (!userToken) throw Object.assign(new Error('Authentication required'), { status: 401 });
@@ -1546,9 +1574,16 @@ if (process.env.SCREEN_STORAGE_ENABLED === 'true') {
       ]);
       return { asset: info.data, attrs: Object.fromEntries(details.data.map(attr => [attr.key, attr.value])) };
     }
+  };
+  app.use('/api/twynix/screens', createScreenRouter({ store: screenStore, ...documentAccess }));
+  const { openFaceplateStore } = require('./src/faceplate-store');
+  const { createFaceplateRouter } = require('./src/faceplate-router');
+  app.use('/api/twynix/faceplate-templates', createFaceplateRouter({
+    store: openFaceplateStore(screenDbPath), ...documentAccess
   }));
 } else {
   app.use('/api/twynix/screens', (req, res) => res.status(503).json({ message: 'SQLite screen storage is not enabled on this proxy' }));
+  app.use('/api/twynix/faceplate-templates', (req, res) => res.status(503).json({ message: 'SQLite document storage is not enabled on this proxy' }));
 }
 
 app.use(createTwynixOplogRouter({

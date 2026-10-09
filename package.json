@@ -18,6 +18,8 @@
     "helmet": "^8.1.0",
     "http-proxy-middleware": "^3.0.3",
     "jsonwebtoken": "^9.0.2",
+    "node-opcua-certificate-manager": "2.187.0",
+    "node-opcua-client": "2.187.1",
     "pino": "^9.4.0",
     "pino-pretty": "^11.2.2"
   }
