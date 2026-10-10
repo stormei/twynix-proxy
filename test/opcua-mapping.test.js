@@ -88,6 +88,9 @@ test('deploy creates isolated resources, disables device creation and preserves 
   const writes = calls.filter(c => c.method === 'POST');
   assert.equal(writes.length, 2); assert.equal(writes[1].body.allowCreateDevicesOrAssets, false);
   assert.equal(writes[1].body.downlinkConverterId, null); assert.equal(writes.every(c => c.u === user), true);
+  assert.deepEqual(writes[1].body.configuration.metadata, {});
+  assert.equal(writes[1].body.configuration.clientConfiguration.applicationName, 'Twynix OPC UA');
+  assert.equal(writes[1].body.configuration.clientConfiguration.applicationUri, 'urn:twynix:opcua:test');
   assert.equal(store.deployments(user.tenantId, 'test')[0].state, 'applied');
   await assert.rejects(service.deploy(user, 'test', p.token), { status: 409 });
 });
@@ -96,6 +99,59 @@ test('external edits block deployment rather than overwrite external configurati
   const p = await service.preview(user, 'test', 'session'); await service.deploy(user, 'test', p.token);
   const integration = [...resources.values()].find(r => r.type === 'OPC_UA'); integration.name = 'Changed externally';
   await assert.rejects(service.preview(user, 'test', 'session'), { status: 409 });
+});
+test('explicit reapply repairs an older saved Integration missing metadata without duplicating it', async t => {
+  const { service, store, calls } = setup(t);
+  const request = service.request;
+  service.request = async (u, method, path, body) => {
+    if (method === 'POST' && path === '/api/integration') delete body.configuration.metadata;
+    return request(u, method, path, body);
+  };
+  let p = await service.preview(user, 'test', 'session'); await service.deploy(user, 'test', p.token);
+  const initial = store.deployments(user.tenantId, 'test')[0];
+  service.request = request;
+  p = await service.preview(user, 'test', 'session'); await service.deploy(user, 'test', p.token);
+  const updated = calls.filter(c => c.method === 'POST' && c.path === '/api/integration').at(-1).body;
+  assert.equal(updated.id.id, initial.resources.integrationId);
+  assert.deepEqual(updated.configuration.metadata, {});
+});
+for (const [status, expected] of [[undefined, 'pending'], [{ success: true }, 'active'], [{ success: false, error: 'private upstream diagnostic' }, 'failed'], [{}, 'unknown']]) {
+  test(`verification reports ${expected} independently of fresh telemetry`, async t => {
+    const { service, store, calls, m } = setup(t);
+    const p = await service.preview(user, 'test', 'session'); await service.deploy(user, 'test', p.token);
+    const deployment = store.deployments(user.tenantId, 'test')[0];
+    const request = service.request;
+    service.request = async (u, method, path, body) => {
+      assert.equal(u, user);
+      if (path.startsWith('/api/integrationInfos?')) return { data: [
+        { id: { id: 'another-integration' }, status: { success: true } },
+        { id: { id: deployment.resources.integrationId }, status }
+      ], hasNext: false };
+      if (path.startsWith('/api/plugins/telemetry/')) return { [m.key]: [{ ts: deployment.updatedAt + 1, value: 42 }] };
+      return request(u, method, path, body);
+    };
+    const writeCount = calls.filter(c => c.method === 'POST').length;
+    const result = await service.verify(user, 'test');
+    assert.equal(result.integration.state, expected);
+    assert.equal(result.signals[0].receivedSinceDeployment, true);
+    assert.equal(JSON.stringify(result).includes('private upstream diagnostic'), false);
+    assert.equal(calls.filter(c => c.method === 'POST').length, writeCount);
+  });
+}
+test('status lookup is bounded and unavailable permissions cannot imply Active', async t => {
+  const { service, store } = setup(t);
+  const p = await service.preview(user, 'test', 'session'); await service.deploy(user, 'test', p.token);
+  const deployment = store.deployments(user.tenantId, 'test')[0], request = service.request;
+  let pages = 0;
+  service.request = async (...args) => {
+    if (args[2].startsWith('/api/integrationInfos?')) { pages++; return { data: [{ id: { id: 'other' }, status: { success: true } }], hasNext: true }; }
+    return request(...args);
+  };
+  assert.equal((await service.integrationStatus(user, 'test', deployment)).state, 'unknown');
+  assert.equal(pages, 3);
+  service.request = async () => { throw Object.assign(new Error('secret'), { status: 403 }); };
+  const result = await service.integrationStatus(user, 'test', deployment);
+  assert.equal(result.state, 'unknown'); assert.equal(JSON.stringify(result).includes('secret'), false);
 });
 test('partial or unknown save is journalled and blocks duplicate retry', async t => {
   const { service, store } = setup(t);
@@ -133,6 +189,8 @@ test('disabling all mappings disables only the managed Integration and retains r
   await service.deploy(user, 'test', p.token);
   assert.equal(calls.filter(c => c.method === 'POST' && c.path === '/api/converter').length, 1);
   assert.equal(calls.filter(c => c.method === 'POST' && c.path === '/api/integration').at(-1).body.enabled, false);
+  assert.deepEqual(calls.filter(c => c.method === 'POST' && c.path === '/api/integration').at(-1).body.configuration.metadata, {});
+  assert.equal((await service.verify(user, 'test')).integration.state, 'disabled');
   assert.equal(calls.some(c => c.method === 'DELETE'), false);
 });
 test('twenty mappings preserve Unicode values and skip missing inputs', () => {

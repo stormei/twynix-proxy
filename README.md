@@ -426,6 +426,18 @@ timing is ThingsBoard-controlled (4.4 requests 1 second). Fresh telemetry timest
 confirm receipt, not source provenance or signal-health policy. No production-scale
 or 20-signal live acceptance claim is made by the automated tests.
 
+Verification reports the managed Integration's runtime status separately from
+device telemetry. Pending includes integrations that have never started
+successfully; inspect their ThingsBoard Lifecycle events. Active does not prove
+OPC UA connectivity or that this Integration produced a particular device value.
+An unavailable status is reported as unknown, never inferred from timestamps.
+
+If a previously generated TB 4.4 Integration fails with a null `metadata` error,
+deploy the updated proxy, then explicitly review and apply the existing mappings
+again. This adds the required root `configuration.metadata` object and OPC UA
+application identity. No live resources are repaired automatically. Existing
+ownership/version checks still block overwriting external configuration changes.
+
 ### Back up and restore OPC UA mappings
 
 Mount a separate backup destination into the container, for example `/backups`.

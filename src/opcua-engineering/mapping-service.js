@@ -172,7 +172,11 @@ class MappingService {
         ...(p.integration || { name: `Twynix OPC UA · ${id} · ${attempt.slice(0, 8)}`, type: 'OPC_UA', routingKey: randomUUID(), secret: randomUUID(), remote: false }),
         additionalInfo: ownership, enabled: p.signals.length > 0, allowCreateDevicesOrAssets: false,
         defaultConverterId: converter.id, downlinkConverterId: null,
-        configuration: !p.signals.length ? p.integration.configuration : { clientConfiguration: { host: endpoint.hostname, port: Number(endpoint.port), endpoint: endpoint.pathname.replace(/^\//, ''),
+        // TB 4.4 AbstractIntegration.init iterates configuration.metadata even
+        // when no custom metadata is configured. A missing object prevents startup.
+        configuration: !p.signals.length ? { ...p.integration.configuration, metadata: p.integration.configuration.metadata || {} } : { metadata: p.integration?.configuration?.metadata || {}, clientConfiguration: {
+          applicationName: 'Twynix OPC UA', applicationUri: `urn:twynix:opcua:${id}`,
+          host: endpoint.hostname, port: Number(endpoint.port), endpoint: endpoint.pathname.replace(/^\//, ''),
           scanPeriodInSeconds: 10, timeoutInMillis: 5000, security: 'None', identity: { type: 'anonymous' },
           keystore: { location: '', type: 'PKCS12', fileContent: '', password: '', alias: '', keyPassword: '' }, mapping: p.compiled.mapping } }
       });
@@ -192,10 +196,38 @@ class MappingService {
       fail(409, 'Deployment needs attention. Saved resources may already be active. No automatic rollback or retry was attempted.');
     }
   }
+  async integrationStatus(user, id, deployment) {
+    const unknown = { state: 'unknown', message: 'Integration status unavailable. Check ThingsBoard Integration lifecycle events.' };
+    try {
+      const integration = await this.request(user, 'GET', `/api/integration/${deployment.resources.integrationId}`);
+      this.assertOwned(integration, user, id);
+      if (hash(integration) !== deployment.resources.integrationHash) return { state: 'unknown', message: 'Managed Integration configuration changed. Reconcile it before deploying.' };
+      if (integration.enabled === false) return { state: 'disabled', message: 'Managed Integration is disabled.' };
+      // The configuration endpoint has no runtime status. Read the caller-scoped
+      // info inventory and match the exact ID, never a similarly named Integration.
+      for (let page = 0; page < 3; page++) {
+        const result = await this.request(user, 'GET', `/api/integrationInfos?pageSize=100&page=${page}&isEdgeTemplate=false&textSearch=${encodeURIComponent(integration.name)}`);
+        if (!Array.isArray(result.data)) return unknown;
+        const info = result.data.find(item => item.id?.id === integration.id.id);
+        if (info) {
+          if (info.status == null) return { state: 'pending', message: 'Integration pending. Startup is not confirmed; check ThingsBoard lifecycle events.' };
+          if (info.status.success === true) return { state: 'active', message: 'ThingsBoard reports Integration active. This does not confirm signal delivery.' };
+          if (info.status.success === false) return { state: 'failed', message: 'Integration failed. Check ThingsBoard lifecycle events.' };
+          return unknown;
+        }
+        if (!result.hasNext) return unknown;
+      }
+    } catch {
+      // Do not leak upstream error payloads, Integration secrets or configuration.
+      // Unavailable/denied status must never be inferred from device telemetry.
+    }
+    return unknown;
+  }
   async verify(user, id) {
     this.connection(user, id);
     const deployment = this.store.deployments(user.tenantId, id).find(d => d.state === 'applied');
     if (!deployment) fail(400, 'No successful deployment to verify');
+    const integration = await this.integrationStatus(user, id, deployment);
     const results = [];
     const signals = deployment.resources.signals || [];
     for (const deviceId of new Set(signals.map(s => s.deviceId))) {
@@ -207,7 +239,7 @@ class MappingService {
           value: point ? String(point.value).slice(0, 256) : null, receivedSinceDeployment: !!point && Number(point.ts) > deployment.updatedAt });
       }
     }
-    return { deploymentId: deployment.id, checkedAt: this.now(), signals: results };
+    return { deploymentId: deployment.id, checkedAt: this.now(), integration, signals: results };
   }
 }
 module.exports = { MappingService, hash };
